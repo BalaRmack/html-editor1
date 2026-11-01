@@ -9,6 +9,7 @@ import { launcher } from './services/launch'
 import { logger } from './services/logger'
 import { paths } from './services/paths'
 import { profileService } from './services/profile'
+import { updates } from './services/updater'
 import { ensureTray } from './tray'
 import { createMainWindow, getMainWindow } from './window'
 
@@ -52,6 +53,7 @@ async function bootstrap(): Promise<void> {
 
   instances.init(paths.get().instancesDir, paths.get().sharedDir)
   profileService.init(paths.get().skinsDir)
+  updates.init()
   registerIpc()
 
   createMainWindow()
@@ -63,6 +65,9 @@ async function bootstrap(): Promise<void> {
       app.quit()
     }
   })
+
+  // Update check on boot + every hour (the first one never blocks the window).
+  updates.start()
 
   // Warm the Java cache in the background so the settings screen opens instantly.
   void javaService.scan([paths.get().javaDir]).catch((error: Error) => logger.warn(`Сканирование Java: ${error.message}`))

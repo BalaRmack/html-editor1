@@ -15,6 +15,15 @@
 
 /* ---------------------------------------------------------------- layout */
 
+/* Desktop shell: the window scrolls internally, never the document. */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+
 .app-shell {
   position: relative;
   display: flex;

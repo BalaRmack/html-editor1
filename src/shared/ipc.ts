@@ -24,6 +24,7 @@ import type {
   SkinInfo,
   SystemInfo,
   TaskProgress,
+  UpdateState,
   VersionSummary,
   CrashInfo
 } from './types'
@@ -102,6 +103,15 @@ export const IPC = {
     toggle: 'mods:toggle',
     installPack: 'mods:install-pack',
     openFolder: 'mods:open-folder'
+  },
+  updates: {
+    state: 'updates:state',
+    check: 'updates:check',
+    download: 'updates:download',
+    install: 'updates:install',
+    defer: 'updates:defer',
+    skip: 'updates:skip',
+    resume: 'updates:resume'
   }
 } as const
 
@@ -111,7 +121,8 @@ export const EVENTS = {
   logsCleared: 'logs:cleared',
   tasksProgress: 'tasks:progress',
   gameChanged: 'game:changed',
-  gameCrash: 'game:crash'
+  gameCrash: 'game:crash',
+  updateChanged: 'updates:changed'
 } as const
 
 export interface IpcError {
@@ -214,5 +225,19 @@ export interface LauncherApi {
     toggle(instanceId: string, fileName: string, enabled: boolean): Promise<void>
     installPack(input: ModpackInstallInput): Promise<Instance>
     openFolder(instanceId: string): Promise<void>
+  }
+  updates: {
+    state(): Promise<UpdateState>
+    check(): Promise<UpdateState>
+    /** Starts the download and resolves once it finished (progress is pushed). */
+    download(): Promise<UpdateState>
+    /** Quits the app and installs the already-downloaded update. */
+    install(): void
+    /** «Отложить» — hide the banner until the next launch. */
+    defer(): Promise<UpdateState>
+    /** «Не скачивать эту версию» — persisted across launches. */
+    skip(): Promise<UpdateState>
+    resume(): Promise<UpdateState>
+    onChange(listener: (state: UpdateState) => void): Unsubscribe
   }
 }

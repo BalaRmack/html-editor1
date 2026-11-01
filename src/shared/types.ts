@@ -350,3 +350,39 @@ export interface DirEntryInfo {
 }
 
 export type ThemeAccent = 'emerald' | 'gold'
+
+/* ---------------------------------------------------------------- updates */
+
+export type UpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error'
+
+export interface UpdateRelease {
+  /** Normalised version without the leading `v`, e.g. `1.2.0`. */
+  version: string
+  tag: string
+  name: string
+  notes: string
+  publishedAt: string | null
+  htmlUrl: string
+  assetName: string | null
+  assetUrl: string | null
+  sizeBytes: number
+}
+
+export interface UpdateProgress {
+  /** 0…100 */
+  percent: number
+  transferred: number
+  total: number
+  bytesPerSecond: number
+}
+
+export interface UpdateState {
+  phase: UpdatePhase
+  currentVersion: string
+  release: UpdateRelease | null
+  progress: UpdateProgress | null
+  error?: string
+  checkedAt: string | null
+  /** Version the user asked never to be offered again. */
+  skippedVersion: string | null
+}

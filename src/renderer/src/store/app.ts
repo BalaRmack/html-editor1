@@ -13,7 +13,8 @@ import type {
   OfflineProfile,
   SkinInfo,
   SystemInfo,
-  TaskProgress
+  TaskProgress,
+  UpdateState
 } from '../../../shared/types'
 import { api } from '../lib/api'
 import { extractCode } from '../lib/utils'
@@ -61,6 +62,8 @@ interface AppStore {
   crash: CrashInfo | null
 
   integrity: Record<string, IntegrityState>
+  /** Launcher self-update state pushed from the main process. */
+  update: UpdateState | null
 
   profileModalOpen: boolean
   createOpen: boolean
@@ -80,6 +83,11 @@ interface AppStore {
   openCreate: (tab?: CreateTab) => void
   closeCreate: () => void
   setCreateTab: (tab: CreateTab) => void
+  checkForUpdates: () => Promise<void>
+  downloadUpdate: () => Promise<void>
+  installUpdate: () => void
+  deferUpdate: () => Promise<void>
+  skipUpdate: () => Promise<void>
   pushToast: (toast: Omit<ToastItem, 'id'>) => void
   dismissToast: (id: number) => void
   toastError: (error: unknown, titleKey?: string) => void
@@ -118,6 +126,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   crash: null,
 
   integrity: {},
+  update: null,
 
   profileModalOpen: false,
   createOpen: false,
@@ -176,6 +185,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     })
     api.game.onCrash((crash) => set({ crash }))
+
+    // Self-update: pull the current state and follow every push.
+    void api.updates
+      .state()
+      .then((update) => set({ update }))
+      .catch(() => undefined)
+    api.updates.onChange((update) => set({ update }))
 
     // Prove the files are really on disk before the UI offers «Играть».
     // Selected instance first, the rest in the background so boot stays instant.
@@ -247,6 +263,35 @@ export const useAppStore = create<AppStore>((set, get) => ({
   openCreate: (tab) => set({ createOpen: true, createTab: tab ?? 'versions' }),
   closeCreate: () => set({ createOpen: false }),
   setCreateTab: (tab) => set({ createTab: tab }),
+
+  async checkForUpdates() {
+    const update = await api.updates.check().catch((error) => {
+      get().toastError(error, 'update.error')
+      return null
+    })
+    if (update) set({ update })
+  },
+
+  async downloadUpdate() {
+    const update = await api.updates.download().catch((error) => {
+      get().toastError(error, 'update.error')
+      return null
+    })
+    if (update) set({ update })
+  },
+
+  installUpdate() {
+    api.updates.install()
+  },
+
+  async deferUpdate() {
+    set({ update: await api.updates.defer() })
+  },
+
+  async skipUpdate() {
+    set({ update: await api.updates.skip() })
+    get().pushToast({ kind: 'info', titleKey: 'update.skipped' })
+  },
 
   pushToast: (toast) => {
     const id = ++toastSeq

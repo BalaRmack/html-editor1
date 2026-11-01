@@ -375,9 +375,17 @@ const TOAST_ICON = {
 export function ToastHost({ toasts }: { toasts: ToastItem[] }): JSX.Element {
   const t = useT()
   const dismiss = useAppStore((state) => state.dismissToast)
+  // Primitive selector: the banner sits in the same corner, so toasts slide up.
+  const updatePhase = useAppStore((state) => state.update?.phase ?? null)
+  const updateVisible = updatePhase === 'available' || updatePhase === 'downloading' || updatePhase === 'ready'
 
   return (
-    <div className="pointer-events-none fixed bottom-6 right-6 z-[60] flex w-[336px] flex-col gap-2.5">
+    <div
+      className={cn(
+        'pointer-events-none fixed right-6 z-[60] flex w-[336px] flex-col gap-2.5 transition-all duration-300',
+        updateVisible ? 'bottom-[236px]' : 'bottom-6'
+      )}
+    >
       <AnimatePresence initial={false}>
         {toasts.map((toast) => {
           const Icon = TOAST_ICON[toast.kind]

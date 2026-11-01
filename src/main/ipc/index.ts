@@ -27,6 +27,7 @@ import { modsService } from '../services/mods'
 import { paths } from '../services/paths'
 import { profileService } from '../services/profile'
 import { tasks } from '../services/tasks'
+import { updates } from '../services/updater'
 import { versions } from '../services/versions'
 
 function coded(code: string, message?: string): Error {
@@ -411,8 +412,20 @@ export function registerIpc(): void {
     return instance
   })
 
+  // ---------- launcher updates ----------
+  handle(IPC.updates.state, () => updates.stateSnapshot())
+  handle(IPC.updates.check, () => updates.check())
+  handle(IPC.updates.download, () => updates.download())
+  handle(IPC.updates.install, () => {
+    updates.install()
+  })
+  handle(IPC.updates.defer, () => updates.defer())
+  handle(IPC.updates.skip, () => updates.skip())
+  handle(IPC.updates.resume, () => updates.resume())
+
   // ---------- push events ----------
   logger.subscribe((line) => broadcast(EVENTS.logsLine, line))
+  updates.onState((state) => broadcast(EVENTS.updateChanged, state))
   tasks.subscribe((progress) => broadcast(EVENTS.tasksProgress, progress))
 
   launcher.onState((snapshot) => {

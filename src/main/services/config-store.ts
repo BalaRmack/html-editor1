@@ -4,10 +4,16 @@ import { DEFAULT_SETTINGS } from '../../shared/constants'
 import type { AppSettings, OfflineProfile } from '../../shared/types'
 import { logger } from './logger'
 
+export interface UpdatePrefs {
+  /** Version the user pressed «Не скачивать эту версию» on. */
+  skippedVersion: string | null
+}
+
 export interface PersistedConfig {
   profile: OfflineProfile | null
   settings: AppSettings
   selectedInstanceId: string | null
+  updates: UpdatePrefs
 }
 
 /** Settings are merged so a config written by an older version keeps working. */
@@ -51,7 +57,8 @@ export class ConfigStore {
       this.config = {
         profile: parsed.profile ?? null,
         settings: normalizeSettings(parsed.settings, fallbackDataRoot),
-        selectedInstanceId: parsed.selectedInstanceId ?? null
+        selectedInstanceId: parsed.selectedInstanceId ?? null,
+        updates: { skippedVersion: parsed.updates?.skippedVersion ?? null }
       }
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
@@ -62,7 +69,8 @@ export class ConfigStore {
       this.config = {
         profile: null,
         settings: normalizeSettings(null, fallbackDataRoot),
-        selectedInstanceId: null
+        selectedInstanceId: null,
+        updates: { skippedVersion: null }
       }
     }
     return this.config
@@ -70,7 +78,12 @@ export class ConfigStore {
 
   get(): PersistedConfig {
     if (!this.config) {
-      this.config = { profile: null, settings: normalizeSettings(null, ''), selectedInstanceId: null }
+      this.config = {
+        profile: null,
+        settings: normalizeSettings(null, ''),
+        selectedInstanceId: null,
+        updates: { skippedVersion: null }
+      }
     }
     return this.config
   }
@@ -83,6 +96,16 @@ export class ConfigStore {
   setSelectedInstance(id: string | null): void {
     this.get().selectedInstanceId = id
     this.saveSoon()
+  }
+
+  /** Remembers «Не скачивать эту версию» across restarts. */
+  setSkippedUpdate(version: string | null): void {
+    this.get().updates.skippedVersion = version
+    void this.save()
+  }
+
+  skippedUpdate(): string | null {
+    return this.get().updates.skippedVersion
   }
 
   async updateSettings(patch: Partial<AppSettings>, fallbackDataRoot: string): Promise<AppSettings> {

@@ -11,6 +11,7 @@ import { PlayScreen } from './features/Play'
 import { ProfileModal } from './features/ProfileModal'
 import { SettingsScreen } from './features/Settings'
 import { SkinsScreen } from './features/Skins'
+import { UpdateBanner } from './features/UpdateBanner'
 import { useT } from './i18n'
 import { api } from './lib/api'
 import { useAppStore } from './store/app'
@@ -115,6 +116,7 @@ export default function App(): JSX.Element {
       <CreateInstanceModal />
       <ProfileModal />
       <CrashModal />
+      <UpdateBanner />
       <ToastHost toasts={toasts} />
     </div>
   )

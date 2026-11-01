@@ -27,6 +27,7 @@ import type {
   SkinInfo,
   SystemInfo,
   TaskProgress,
+  UpdateState,
   VersionSummary
 } from '../shared/types'
 
@@ -135,6 +136,16 @@ const api: LauncherApi = {
       invoke<void>(IPC.mods.toggle, instanceId, fileName, enabled),
     installPack: (input: ModpackInstallInput) => invoke<Instance>(IPC.mods.installPack, input),
     openFolder: (instanceId: string) => invoke<void>(IPC.mods.openFolder, instanceId)
+  },
+  updates: {
+    state: () => invoke<UpdateState>(IPC.updates.state),
+    check: () => invoke<UpdateState>(IPC.updates.check),
+    download: () => invoke<UpdateState>(IPC.updates.download),
+    install: () => void invoke<void>(IPC.updates.install),
+    defer: () => invoke<UpdateState>(IPC.updates.defer),
+    skip: () => invoke<UpdateState>(IPC.updates.skip),
+    resume: () => invoke<UpdateState>(IPC.updates.resume),
+    onChange: (listener: (state: UpdateState) => void) => on<UpdateState>(EVENTS.updateChanged, listener)
   }
 }
 

@@ -177,3 +177,43 @@ src/renderer/ i18n RU/EN, store (Zustand), components, features/{play,instances,
 установщик настоящим `makensis` (NSIS 3.0.4.1) и публикует артефакт `verdant-launcher-setup` (116 МБ) —
 `Verdant-Launcher-1.0.0-Setup.exe`. Первые прогоны падали на `warning 6001` (electron-builder собирает
 с `-WX`, любое предупреждение — ошибка); исправлено инициализацией всех переменных скрипта в обоих проходах.
+
+---
+
+## 8. Автообновление (Task 1 спринта)
+
+### 8.1. Как решается «показывать баннер или нет»
+
+Отдельный чистый модуль `src/main/services/update-logic.ts` (без `electron`, покрыт `tests/update-logic.test.ts` — 18 тестов):
+
+| Функция | Смысл |
+|---|---|
+| `parseVersion` / `compareVersions` | `v1.2.3` → `[1,2,3]`, отсутствующие сегменты = 0, prerelease (`-beta.1`) считается **меньше** релиза |
+| `normalizeRelease` | GitHub `releases/latest` → `UpdateRelease`; драфты и теги без версии отбрасываются |
+| `pickInstallerAsset` | выбирает `*setup*.exe`, игнорируя `.blockmap` и `latest.yml` |
+| `decideUpdate` | единственное правило: `notify` / `skipped` / `deferred` / `up-to-date` |
+
+### 8.2. Сервис в main-процессе (`src/main/services/updater.ts`)
+
+- при старте и далее **раз в час** (`CHECK_INTERVAL_MS = 1h`) — `GET https://api.github.com/repos/BalaRmack/html-editor1/releases/latest`
+  (хост переопределяется `VERDANT_GITHUB_API`, это использует CI-тест);
+- `electron-updater` (`autoDownload = false`) скачивает и проверяет `latest.yml` + `.blockmap`; в dev-режиме
+  тот же прогресс показывается обычной HTTP-загрузкой в `<cacheDir>/updates`;
+- сетевой сбой **не прячет** уже показанный баннер: сохраняется последний `release`;
+- «Отложить» — в памяти (`deferredTag`, сбрасывается при следующем запуске), «Не скачивать эту версию» —
+  в `electron-store` (`updates.skippedVersion`), живёт после перезапуска и снимается только для новой версии;
+- IPC: `updates.state|check|download|install|defer|skip|resume` + push-событие `updates:changed`.
+
+### 8.3. Баннер
+
+`src/renderer/src/features/UpdateBanner.tsx` — стеклянная карточка в правом нижнем углу (портал в `body`,
+`fixed bottom-6 right-6`, `z-40`), фазы `available → downloading → ready / error`:
+
+- «Установить» → прогресс-бар (`percent`, `МБ / МБ`, скорость) → «Перезапустить и установить» (`quitAndInstall`);
+- «Отложить» → баннер прячется до следующего запуска;
+- «Не скачивать эту версию» → `updates.skip`, версия больше никогда не предлагается;
+- «Что нового» → `app.openExternal(htmlUrl)`;
+- `ToastHost` поднимается на `bottom-[236px]`, пока баннер виден, чтобы тосты не наезжали.
+
+Скриншоты: `docs/screens/update-available.png`, `update-downloading.png`, `update-ready.png` (+ `update-idle.png`).
+Проверка: `tests/update-logic.test.ts` — 18 тестов; `npx electron-vite build` — зелёный.

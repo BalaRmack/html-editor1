@@ -12,7 +12,8 @@ import type {
   ModHit,
   ModVersion,
   OfflineProfile,
-  TaskProgress
+  TaskProgress,
+  UpdateState
 } from '../../../shared/types'
 import { sleep } from './utils'
 
@@ -88,7 +89,65 @@ let failNextLaunch: MockFailure | null = null
 /** The mock has no push channel for instances; kept as a no-op for clarity. */
 const emitInstances = (): void => undefined
 
+let mockUpdate: UpdateState = {
+  phase: 'idle',
+  currentVersion: APP_VERSION,
+  release: null,
+  progress: null,
+  checkedAt: null,
+  skippedVersion: null
+}
+let updateTimer: number | null = null
+const updateListeners = new Set<(state: UpdateState) => void>()
+
+function emitUpdate(patch: Partial<UpdateState>): UpdateState {
+  mockUpdate = { ...mockUpdate, ...patch }
+  for (const listener of updateListeners) listener(mockUpdate)
+  return mockUpdate
+}
+
+const DEMO_RELEASE = {
+  version: '1.2.0',
+  tag: 'v1.2.0',
+  name: 'Verdant Launcher 1.2.0',
+  notes: 'Новый менеджер контента, автообновление и ускоренная проверка файлов.',
+  publishedAt: now,
+  htmlUrl: 'https://github.com/BalaRmack/html-editor1/releases',
+  assetName: 'Verdant-Launcher-1.2.0-Setup.exe',
+  assetUrl: 'https://example.invalid/Verdant-Launcher-1.2.0-Setup.exe',
+  sizeBytes: 118_000_000
+}
+
 const mockControl = {
+  /** Shows the update banner as if GitHub had a newer release. */
+  offerUpdate(version = '1.2.0'): UpdateState {
+    return emitUpdate({
+      phase: 'available',
+      release: { ...DEMO_RELEASE, version, tag: `v${version}` },
+      progress: null,
+      checkedAt: now
+    })
+  },
+  /** Pushes the banner into the "downloading" phase (100% = ready). */
+  updateProgress(percent = 42): UpdateState {
+    const total = 118_000_000
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)))
+    if (clamped >= 100) {
+      return emitUpdate({
+        phase: 'ready',
+        progress: { percent: 100, transferred: total, total, bytesPerSecond: 0 }
+      })
+    }
+    return emitUpdate({
+      phase: 'downloading',
+      progress: {
+        percent: clamped,
+        transferred: Math.round((total * clamped) / 100),
+        total,
+        bytesPerSecond: 6_400_000
+      }
+    })
+  },
   /** Marks an instance as half-downloaded: verify() will fail for it. */
   breakInstance(id: string, files = ['client-1.21.4.jar', 'lwjgl-3.3.3.jar', 'assets/objects/1f/1f8c…']): void {
     brokenFiles[id] = files
@@ -883,6 +942,46 @@ export function createMockApi(): LauncherApi {
         return created
       },
       openFolder: async () => undefined
+    },
+    updates: {
+      state: async () => mockUpdate,
+      check: async () => {
+        await sleep(280)
+        return emitUpdate({ checkedAt: now, phase: mockUpdate.release ? mockUpdate.phase : 'up-to-date' })
+      },
+      download: async () => {
+        emitUpdate({ phase: 'downloading', progress: { percent: 0, transferred: 0, total: 118_000_000, bytesPerSecond: 0 } })
+        if (updateTimer) window.clearInterval(updateTimer)
+        updateTimer = window.setInterval(() => {
+          const progress = mockUpdate.progress ?? { percent: 0, transferred: 0, total: 118_000_000, bytesPerSecond: 0 }
+          const percent = Math.min(100, progress.percent + 9)
+          emitUpdate({
+            phase: percent >= 100 ? 'ready' : 'downloading',
+            progress: {
+              percent,
+              transferred: Math.round((percent / 100) * 118_000_000),
+              total: 118_000_000,
+              bytesPerSecond: 6_400_000
+            }
+          })
+          if (percent >= 100 && updateTimer) {
+            window.clearInterval(updateTimer)
+            updateTimer = null
+          }
+        }, 320)
+        return mockUpdate
+      },
+      install: () => undefined,
+      defer: async () => emitUpdate({ phase: 'idle' }),
+      skip: async () => {
+        const skippedVersion = mockUpdate.release?.version ?? null
+        return emitUpdate({ phase: 'idle', skippedVersion })
+      },
+      resume: async () => emitUpdate({ phase: mockUpdate.release ? 'available' : 'idle' }),
+      onChange: (listener: (state: UpdateState) => void) => {
+        updateListeners.add(listener)
+      return () => updateListeners.delete(listener)
     }
+  }
   }
 }
