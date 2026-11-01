@@ -13,6 +13,7 @@ import {
   Maximize2
 } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { APP_VERSION } from '../../../shared/constants'
 import { useT, type TKey } from '../i18n'
 import { api } from '../lib/api'
 import { cn } from '../lib/utils'
@@ -68,7 +69,7 @@ export function TitleBar(): JSX.Element {
         <span className="logo-mark text-[10px]">VERDANT</span>
         <span className="hidden text-[10px] uppercase tracking-[0.28em] text-faint sm:block">launcher</span>
       </div>
-      <div className="text-[10px] uppercase tracking-[0.24em] text-faint">v1.0.0</div>
+      <div className="text-[10px] uppercase tracking-[0.24em] text-faint">v{APP_VERSION}</div>
       <WindowControls />
     </header>
   )

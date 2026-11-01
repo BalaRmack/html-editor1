@@ -15,7 +15,7 @@ import {
   Download
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { GITHUB_URL, LANGUAGES, formatNumber } from '../../../shared/constants'
+import { APP_VERSION, GITHUB_URL, LANGUAGES, formatNumber } from '../../../shared/constants'
 import type { AppSettings, JavaRuntime, ModSource } from '../../../shared/types'
 import { ScreenHeader } from '../components/layout'
 import { Badge, Button, CheckRow, Input, KeyValue, Panel, SectionTitle, Select, Slider, Spinner, Switch } from '../components/ui'
@@ -424,7 +424,7 @@ export function SettingsScreen(): JSX.Element {
               </div>
 
               <div className="mt-5 space-y-1">
-                <KeyValue label={t('settings.about.version')} value={systemInfo?.appVersion ?? '1.0.0'} />
+                <KeyValue label={t('settings.about.version')} value={systemInfo?.appVersion ?? APP_VERSION} />
                 <KeyValue label="Electron" value={systemInfo?.electron ?? '—'} />
                 <KeyValue label="Chromium" value={systemInfo?.chrome ?? '—'} />
                 <KeyValue label="Node.js" value={systemInfo?.node ?? '—'} />

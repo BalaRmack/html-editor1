@@ -1,5 +1,5 @@
 import type { LauncherApi } from '../../../shared/ipc'
-import { DEFAULT_SETTINGS } from '../../../shared/constants'
+import { APP_VERSION, DEFAULT_SETTINGS } from '../../../shared/constants'
 import type {
   AppSettings,
   GameSnapshot,
@@ -510,7 +510,7 @@ export function createMockApi(): LauncherApi {
     /* keep the preview alive with a couple of log lines */
   }
   window.setTimeout(() => {
-    pushLog('Verdant Launcher 1.0.0 — демонстрационный режим (браузер)', 'info')
+    pushLog(`Verdant Launcher ${APP_VERSION} — демонстрационный режим (браузер)`, 'info')
     pushLog('[main/INFO] Setting user: Steve', 'info', 'game')
     pushLog('[Render thread/INFO] OpenAL initialized', 'info', 'game')
     tag()
@@ -519,7 +519,7 @@ export function createMockApi(): LauncherApi {
   return {
     app: {
       info: async () => ({
-        appVersion: '1.0.0',
+        appVersion: APP_VERSION,
         electron: '45.2.1',
         chrome: '142',
         node: '22.20.0',

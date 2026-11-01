@@ -94,3 +94,25 @@ describe('electron-builder wiring', () => {
     expect(nsh).toContain('!define MUI_INSTFILESPAGE_COLORS');
   });
 });
+
+describe('version', () => {
+  it('keeps APP_VERSION in sync with package.json', () => {
+    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string };
+    const constants = readFileSync(path.join(root, 'src', 'shared', 'constants.ts'), 'utf8');
+    const declared = constants.match(/export const APP_VERSION = '([^']+)'/)?.[1];
+    expect(declared).toBe(pkg.version);
+  });
+
+  it('does not hardcode the launcher version in the renderer', () => {
+    // Minecraft/loader versions are literals everywhere (mock data), so only
+    // the app version itself is checked here.
+    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string };
+    const files = ['components/layout.tsx', 'lib/mock.ts', 'features/Settings.tsx'];
+    for (const file of files) {
+      const source = readFileSync(path.join(root, 'src', 'renderer', 'src', file), 'utf8');
+      expect(source, `${file} should import APP_VERSION`).toContain('APP_VERSION');
+      expect(source.includes(`${pkg.version}'`), `${file} must not embed ${pkg.version}`).toBe(false);
+      expect(source.includes(`v${pkg.version}`), `${file} must not embed v${pkg.version}`).toBe(false);
+    }
+  });
+});
