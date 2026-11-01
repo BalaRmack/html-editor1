@@ -49,7 +49,7 @@ function mockLogTail(): string[] {
   const push = (ts: string, level: string, text: string): void => {
     lines.push(`2026-11-01T08:${ts}Z [${level}] [launcher] ${text}`)
   }
-  push('08:52.265', 'INFO', 'Verdant Launcher 1.1.0 — старт')
+  push('08:52.265', 'INFO', 'Verdant Launcher 1.1.1 — старт')
   push('08:52.402', 'INFO', 'Платформа: Windows 11 10.0.22631 (x64), Electron 45.2.1')
   push('08:52.611', 'INFO', 'Каталог данных: C:\\Users\\Player\\AppData\\Roaming\\Verdant')
   push('08:52.780', 'INFO', 'Java 21 (21.0.5) найдена: C:\\Program Files\\Java\\jdk-21\\bin\\javaw.exe')
