@@ -162,6 +162,16 @@ export async function curseforgeVersions(
   return response.data.sort((a, b) => Date.parse(b.fileDate) - Date.parse(a.fileDate)).map((file) => toVersion(projectId, file))
 }
 
+/** Fetch a single file of a project (used by modpack manifests). */
+export async function curseforgeFile(projectId: string, fileId: string, apiKey: string): Promise<ModVersion | null> {
+  try {
+    const response = await cfFetch<{ data: CfFile }>(`/mods/${projectId}/files/${fileId}`, apiKey)
+    return toVersion(projectId, response.data)
+  } catch {
+    return null
+  }
+}
+
 export async function curseforgePackVersions(
   projectId: string,
   mcVersion: string | null | undefined,

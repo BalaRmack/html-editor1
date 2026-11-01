@@ -16,7 +16,7 @@ import type {
   ModVersion,
   ModpackInstallInput
 } from '../../shared/types'
-import { curseforgePackVersions, curseforgeProject, curseforgeSearch, curseforgeVersions } from './curseforge'
+import { curseforgeFile, curseforgePackVersions, curseforgeProject, curseforgeSearch, curseforgeVersions } from './curseforge'
 import { instances } from './instances'
 import { installer } from './installer'
 import { logger } from './logger'
@@ -361,8 +361,7 @@ export class ModsService {
         task.stage('Скачивание модов CurseForge', 0, index.curseFiles.length)
         const manifest: Manifest = { mods: {} }
         for (const file of index.curseFiles) {
-          const meta = await curseforgePackVersions(file.projectId, null, settings.curseForgeApiKey).catch(() => [])
-          const matching = meta.find((entry) => entry.id === file.fileId) ?? meta[0]
+          const matching = await curseforgeFile(file.projectId, file.fileId, settings.curseForgeApiKey).catch(() => null)
           if (!matching) continue
           const target = join(gameDir, 'mods', basename(matching.fileName))
           await mkdir(join(gameDir, 'mods'), { recursive: true })
