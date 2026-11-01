@@ -65,7 +65,18 @@ jobs:
       # Compiles build/installer.nsh for real: the wizard, its bitmaps and the
       # uninstaller page are only exercised by makensis.
       - name: Package NSIS installer
-        run: npx electron-builder --win nsis --x64 --publish never
+        shell: bash
+        run: |
+          set -o pipefail
+          npx electron-builder --win nsis --x64 --publish never 2>&1 | tee nsis-build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nsis-build-log
+          path: nsis-build.log
+          if-no-files-found: ignore
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
