@@ -27,6 +27,7 @@ import { AppError, toFailure } from '../services/errors'
 import { feedbackService } from '../services/feedback'
 import { instances } from '../services/instances'
 import { installer } from '../services/installer'
+import { invalidateVerifyCache } from '../services/verify-cache'
 import { javaService } from '../services/java'
 import { launcher } from '../services/launch'
 import { logger } from '../services/logger'
@@ -274,13 +275,15 @@ export function registerIpc(): void {
     const settings = configStore.get().settings
     const sharedDir = paths.get().sharedDir
     try {
+      // The install rewrites files, so every cached fingerprint is now a lie.
+      await invalidateVerifyCache(instances.gameDir(instance.id))
       const outcome = await installer.installInstance(instance, sharedDir, settings.javaPath)
       await instances.setVersionInfo(instance.id, outcome.versionId, outcome.loaderVersion, outcome.mcVersion)
 
       // Never trust the downloader: prove the files are on disk before the UI
       // is allowed to enable «Играть».
       const updated = await instances.get(instanceId)
-      const report = await installer.verify(updated, sharedDir)
+      const report = await installer.verify(updated, sharedDir, { instanceDir: instances.gameDir(instanceId) })
       if (!report.ok) {
         logger.error(
           `Установка «${instance.name}»: проверка целостности не прошла (${report.missing.length + report.truncatedIssues} файлов)`
@@ -311,9 +314,12 @@ export function registerIpc(): void {
     }
   })
 
-  handle(IPC.install.verify, async (_event, instanceId: string, options?: { deep?: boolean }) => {
+  handle(IPC.install.verify, async (_event, instanceId: string, options?: { deep?: boolean; fresh?: boolean }) => {
     const instance = await instances.get(instanceId)
-    return installer.verify(instance, paths.get().sharedDir, options ?? {})
+    return installer.verify(instance, paths.get().sharedDir, {
+      ...(options ?? {}),
+      instanceDir: instances.gameDir(instanceId)
+    })
   })
 
   handle(IPC.install.cancel, () => {

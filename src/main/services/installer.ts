@@ -102,8 +102,16 @@ export class InstallerService {
   }
 
   /** Verifies every file of an instance without downloading anything. */
-  async verify(instance: Instance, sharedDir: string, options: { deep?: boolean } = {}): Promise<IntegrityReport> {
-    return checkIntegrity(instance, sharedDir, options)
+  async verify(
+    instance: Instance,
+    sharedDir: string,
+    options: { deep?: boolean; fresh?: boolean; instanceDir?: string } = {}
+  ): Promise<IntegrityReport> {
+    return checkIntegrity(
+      { id: instance.id, versionId: instance.versionId, mcVersion: instance.mcVersion, instanceDir: options.instanceDir },
+      sharedDir,
+      { deep: options.deep, fresh: options.fresh }
+    )
   }
 
   /** Reads the java major declared by the vanilla version json, if present. */

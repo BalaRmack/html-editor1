@@ -1,67 +1,54 @@
-import { createHash } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Version } from '@xmcl/core'
 import type { IntegrityIssue, IntegrityReport } from '../../shared/types'
 import { logger } from './logger'
+import {
+  cacheIsUsable,
+  loadVerifyCache,
+  mergeCache,
+  saveVerifyCache,
+  verifyFiles,
+  type ExpectedFile,
+  type Fingerprint
+} from './verify-cache'
 
 /**
  * Real integrity check for an instance.
  *
- * `Instance.installed` only says "the version json exists", which is why a
+ * `Instance.installed` only says «the version json exists», which is why a
  * download that died half-way used to look installed and handed the user a
  * working «Играть» button. This module walks everything the game actually
  * needs — client jar, every resolved library (natives included) and every
  * asset object from the index — and reports what is missing or truncated.
+ *
+ * Task 4: the walk is now **incremental**. Fingerprints (size + mtime + sha1)
+ * are cached per instance in `.verdant-verified.json`, so a healthy install is
+ * validated by `stat()` alone and only files whose stat changed are re-hashed.
+ * A cold cache therefore costs exactly what the old check cost, and every
+ * subsequent start is a fraction of it.
  */
 
 export interface IntegrityTarget {
   id: string
   versionId: string
   mcVersion: string
+  /** Instance folder — enables the fingerprint cache. */
+  instanceDir?: string
 }
 
 export interface IntegrityOptions {
-  /** Verify sha1 of every file instead of only existence + size (slow). */
+  /** Verify sha1 of every file instead of only files whose stat changed (slow). */
   deep?: boolean
   /** Stop recording issues after this many, keeps the IPC payload small. */
   maxIssues?: number
+  /** Ignore the fingerprint cache and start from scratch. */
+  fresh?: boolean
 }
 
 const DEFAULT_MAX_ISSUES = 40
-/** Parallel `stat` calls — enough to be fast on spinning disks too. */
+/** Parallel file inspections — enough to be fast on spinning disks too. */
 const CONCURRENCY = 24
-
-async function mapWithLimit<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length)
-  let cursor = 0
-  const runners = Array.from({ length: Math.min(limit, Math.max(1, items.length)) }, async () => {
-    for (;;) {
-      const index = cursor++
-      if (index >= items.length) return
-      results[index] = await worker(items[index])
-    }
-  })
-  await Promise.all(runners)
-  return results
-}
-
-async function fileSize(path: string): Promise<number | null> {
-  try {
-    const info = await stat(path)
-    return info.isFile() ? info.size : null
-  } catch {
-    return null
-  }
-}
-
-async function sha1(path: string): Promise<string | null> {
-  try {
-    return createHash('sha1').update(await readFile(path)).digest('hex')
-  } catch {
-    return null
-  }
-}
 
 interface AssetObject {
   hash: string
@@ -99,136 +86,132 @@ export async function checkIntegrity(
   }
 
   const versionJson = join(sharedDir, 'versions', target.versionId, `${target.versionId}.json`)
-  const jsonSize = await fileSize(versionJson)
-  if (!jsonSize) {
-    return report({ ok: false, code: 'not_installed', error: `Нет файла версии ${target.versionId}.json` })
-  }
-
   let resolved: Awaited<ReturnType<typeof Version.parse>>
   try {
     resolved = await Version.parse(sharedDir, target.versionId)
   } catch (error) {
-    return report({ ok: false, code: 'version_corrupted', error: (error as Error).message })
+    const message = (error as Error).message ?? ''
+    const isMissing = /ENOENT|no such file/i.test(message)
+    return report({
+      ok: false,
+      code: isMissing ? 'not_installed' : 'version_corrupted',
+      error: isMissing ? `Нет файла версии ${target.versionId}.json` : message
+    })
   }
 
-  let checked = 0
-  let libraries = 0
-  let assets = 0
+  // ---- what the game needs, as data ------------------------------------
+  const expected: ExpectedFile[] = []
 
-  // ---- client jar -------------------------------------------------------
   const jarCandidates = [
     join(sharedDir, 'versions', target.versionId, `${target.versionId}.jar`),
     join(sharedDir, 'versions', resolved.minecraftVersion, `${resolved.minecraftVersion}.jar`),
     join(sharedDir, 'versions', target.mcVersion, `${target.mcVersion}.jar`)
   ]
-  const expectedJar = resolved.downloads?.client?.size ?? 0
-  let clientSize: number | null = null
-  for (const candidate of jarCandidates) {
-    const size = await fileSize(candidate)
-    if (size && size > 0) {
-      clientSize = size
-      break
-    }
-  }
-  checked++
-  if (clientSize === null) {
-    push({
-      kind: 'client',
-      name: `${target.mcVersion}.jar`,
-      path: jarCandidates[0],
-      expectedSize: expectedJar
-    })
-  } else if (expectedJar > 0 && clientSize !== expectedJar) {
-    push({
-      kind: 'client',
-      name: `${target.mcVersion}.jar`,
-      path: jarCandidates[0],
-      expectedSize: expectedJar,
-      actualSize: clientSize
-    })
-  }
-
-  // ---- libraries (natives are libraries with a classifier) --------------
-  const libEntries = resolved.libraries.filter((library) => library.path && /\.(jar|zip)$/i.test(library.path))
-  libraries = libEntries.length
-  await mapWithLimit(libEntries, CONCURRENCY, async (library) => {
-    const path = join(sharedDir, 'libraries', library.path)
-    const expected = library.download?.size ?? 0
-    const size = await fileSize(path)
-    checked++
-    if (size === null) {
-      push({ kind: 'library', name: library.path.split('/').pop() ?? library.name, path, expectedSize: expected })
-      return
-    }
-    if (expected > 0 && size !== expected) {
-      push({
-        kind: 'library',
-        name: library.path.split('/').pop() ?? library.name,
-        path,
-        expectedSize: expected,
-        actualSize: size
-      })
-      return
-    }
-    if (options.deep && library.download?.sha1) {
-      const digest = await sha1(path)
-      if (digest && digest !== library.download.sha1) {
-        push({ kind: 'library', name: library.path.split('/').pop() ?? library.name, path, hash: library.download.sha1 })
-      }
-    }
+  const expectedJarSize = resolved.downloads?.client?.size ?? 0
+  const expectedJarHash = resolved.downloads?.client?.sha1
+  // Fabric/Quilt reuse the vanilla jar, so the client may sit under a different
+  // version id — pick the first candidate that exists.
+  const clientPath = (await firstExisting(jarCandidates)) ?? jarCandidates[0]
+  expected.push({
+    kind: 'client',
+    name: `${target.mcVersion}.jar`,
+    path: clientPath,
+    size: expectedJarSize,
+    sha1: expectedJarHash
   })
 
-  // ---- assets ----------------------------------------------------------
+  const libEntries = resolved.libraries.filter((library) => library.path && /\.(jar|zip)$/i.test(library.path))
+  for (const library of libEntries) {
+    expected.push({
+      kind: 'library',
+      name: library.path.split('/').pop() ?? library.name,
+      path: join(sharedDir, 'libraries', library.path),
+      size: library.download?.size ?? 0,
+      sha1: library.download?.sha1
+    })
+  }
+
   const indexId = resolved.assetIndex?.id ?? resolved.assets
   if (indexId) {
     const indexPath = join(sharedDir, 'assets', 'indexes', `${indexId}.json`)
-    const indexSize = await fileSize(indexPath)
-    checked++
-    if (!indexSize) {
-      push({ kind: 'assetIndex', name: `${indexId}.json`, path: indexPath })
-    } else {
-      try {
-        const index = JSON.parse(await readFile(indexPath, 'utf8')) as { objects?: Record<string, AssetObject> }
-        const objects = Object.entries(index.objects ?? {})
-        assets = objects.length
-        await mapWithLimit(objects, CONCURRENCY, async ([name, object]) => {
-          const path = join(sharedDir, 'assets', 'objects', object.hash.slice(0, 2), object.hash)
-          const size = await fileSize(path)
-          checked++
-          if (size === null) {
-            push({ kind: 'asset', name, path, expectedSize: object.size, hash: object.hash })
-            return
-          }
-          if (object.size > 0 && size !== object.size) {
-            push({ kind: 'asset', name, path, expectedSize: object.size, actualSize: size, hash: object.hash })
-          } else if (options.deep) {
-            const digest = await sha1(path)
-            if (digest && digest !== object.hash) {
-              push({ kind: 'asset', name, path, hash: object.hash })
-            }
-          }
+    try {
+      const index = JSON.parse(await readFile(indexPath, 'utf8')) as { objects?: Record<string, AssetObject> }
+      for (const [name, object] of Object.entries(index.objects ?? {})) {
+        expected.push({
+          kind: 'asset',
+          name,
+          path: join(sharedDir, 'assets', 'objects', object.hash.slice(0, 2), object.hash),
+          size: object.size,
+          sha1: object.hash
         })
-      } catch (error) {
-        // Corrupt index = missing index: the installer deletes and re-downloads it.
-        push({ kind: 'assetIndex', name: `${indexId}.json`, path: indexPath })
-        logger.warn(
-          `Индекс ассетов ${indexId} повреждён (${(error as Error).message.slice(0, 100)}) — ` +
-            'будет скачан заново при повторе загрузки'
-        )
       }
+    } catch (error) {
+      // Corrupt index = missing index: the installer deletes and re-downloads it.
+      push({ kind: 'assetIndex', name: `${indexId}.json`, path: indexPath })
+      logger.warn(
+        `Индекс ассетов ${indexId} повреждён (${(error as Error).message.slice(0, 100)}) — ` +
+          'будет скачан заново при повторе загрузки'
+      )
     }
   }
+
+  // ---- fingerprints + verification --------------------------------------
+  const previous = target.instanceDir && !options.fresh ? await loadVerifyCache(target.instanceDir) : null
+  const cache = cacheIsUsable(previous, target.versionId) ? previous : null
+
+  let stats = { checked: 0, hashed: 0, skipped: 0, missing: 0 }
+  let files: Record<string, Fingerprint> = {}
+  if (expected.length > 0) {
+    const outcome = await verifyFiles(expected, cache, { deep: options.deep, concurrency: CONCURRENCY })
+    stats = outcome.stats
+    files = outcome.files
+    for (const issue of outcome.issues) {
+      const file = issue.file
+      push({
+        kind: file.kind,
+        name: file.name,
+        path: file.path,
+        expectedSize: file.size || undefined,
+        actualSize: issue.verdict === 'truncated' ? issue.actualSize : undefined,
+        hash: file.sha1
+      })
+    }
+  }
+
+  // A healthy check refreshes the cache; a broken one keeps the old fingerprints
+  // so the re-download can be compared against them next time.
+  if (target.instanceDir && missing.length === 0 && truncatedIssues === 0) {
+    await saveVerifyCache(target.instanceDir, mergeCache(target.versionId, files, cache))
+  }
+
+  const libraries = libEntries.length
+  const assets = expected.filter((file) => file.kind === 'asset').length
+  const checked = stats.checked
 
   const ok = missing.length === 0 && truncatedIssues === 0
   const result = report({
     ok,
     code: ok ? undefined : 'integrity_failed',
     error: ok ? undefined : `Не хватает файлов: ${missing.length + truncatedIssues}`,
-    counts: { libraries, assets, checked }
+    counts: { libraries, assets, checked, hashed: stats.hashed, skipped: stats.skipped }
   })
   logger.info(
     `Проверка «${target.versionId}»: ${ok ? 'OK' : `${missing.length + truncatedIssues} проблем`} ` +
-      `(библиотек ${libraries}, ассетов ${assets}, проверено ${checked}, ${result.durationMs} мс)`
+      `(библиотек ${libraries}, ассетов ${assets}, проверено ${checked}, ` +
+      `хэшировано ${stats.hashed}, по stat ${stats.skipped}, ${result.durationMs} мс)`
   )
   return result
+}
+
+async function firstExisting(paths: string[]): Promise<string | null> {
+  const { stat } = await import('node:fs/promises')
+  for (const path of paths) {
+    try {
+      const info = await stat(path)
+      if (info.isFile() && info.size > 0) return path
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return null
 }

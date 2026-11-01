@@ -41,7 +41,11 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: resolve('src/renderer/index.html') }
+        input: {
+          index: resolve('src/renderer/index.html'),
+          // Static splash page — bundled next to index.html so `loadFile` finds it.
+          splash: resolve('src/renderer/splash.html')
+        }
       }
     }
   }

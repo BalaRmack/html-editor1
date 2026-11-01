@@ -366,7 +366,15 @@ export interface IntegrityReport {
   missing: IntegrityIssue[]
   /** Issues above the reporting cap are counted but not listed. */
   truncatedIssues: number
-  counts: { libraries: number; assets: number; checked: number }
+  counts: {
+    libraries: number
+    assets: number
+    checked: number
+    /** Files that had to be read and hashed (Task 4: everything else is stat-only). */
+    hashed?: number
+    /** Files accepted from size + mtime alone. */
+    skipped?: number
+  }
   durationMs: number
 }
 

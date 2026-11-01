@@ -193,8 +193,11 @@ export class LaunchService {
         return { ok: false, error: failure.code, file: failure.file }
       }
 
+      // Incremental: `instanceDir` lets the check reuse the fingerprint cache,
+      // so a healthy install is validated by stat alone instead of re-hashing
+      // every library and asset on each launch.
       const report = await checkIntegrity(
-        { id: instance.id, versionId: instance.versionId, mcVersion: instance.mcVersion },
+        { id: instance.id, versionId: instance.versionId, mcVersion: instance.mcVersion, instanceDir },
         sharedDir
       )
       if (!report.ok) {

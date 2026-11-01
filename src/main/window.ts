@@ -1,4 +1,5 @@
 import { BrowserWindow, app, shell } from 'electron'
+import { closeSplash } from './splash'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -44,6 +45,8 @@ export function createMainWindow(): BrowserWindow {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
+    // The main window painted — the splash has done its job.
+    closeSplash()
     if (!app.isPackaged) mainWindow?.webContents.openDevTools({ mode: 'detach' })
   })
 
