@@ -220,16 +220,20 @@ export function Skeleton({ className }: { className?: string }): JSX.Element {
 export function ProgressBar({
   value,
   total,
+  percent: explicitPercent,
   className,
   label
 }: {
   value: number
   total: number
+  /** Pre-computed 0..100 value from the main process (already monotonic). */
+  percent?: number
   className?: string
   label?: string
 }): JSX.Element {
-  const indeterminate = !total || total <= 0
-  const percent = indeterminate ? 0 : clamp((value / total) * 100, 0, 100)
+  const indeterminate = typeof explicitPercent !== 'number' && (!total || total <= 0)
+  const percent =
+    typeof explicitPercent === 'number' ? clamp(explicitPercent, 0, 100) : indeterminate ? 0 : clamp((value / total) * 100, 0, 100)
   return (
     <div className={cn('w-full', className)}>
       <div className="relative h-2 w-full overflow-hidden rounded-full bg-white/[0.07]">

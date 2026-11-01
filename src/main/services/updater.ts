@@ -148,9 +148,15 @@ export class UpdateService {
     let raw: GitHubRelease | null = null
     try {
       raw = await fetchJson<GitHubRelease>(`${GITHUB_API}/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`, {
-        headers: { Accept: 'application/vnd.github+json' },
-        retries: 1,
-        timeoutMs: 12000
+        // GitHub answers 403 to requests without a User-Agent (its API policy
+        // rejects generic clients). A named UA is mandatory, not cosmetic.
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'VerdantLauncher',
+          'X-GitHub-Api-Version': '2022-11-28'
+        },
+        retries: 2,
+        timeoutMs: 15000
       })
     } catch (error) {
       const message = (error as Error).message

@@ -1,13 +1,14 @@
-import { createWriteStream } from 'node:fs'
-import { mkdir, rename, rm } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
 import { USER_AGENT } from '../../shared/constants'
+import { downloadFile as downloadSpec, mirrorFetch } from './downloader'
+import { urlCandidates } from './mirror'
 
 export class NetworkError extends Error {
   readonly code = 'network_error'
-  constructor(message: string, readonly status?: number) {
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly file?: string
+  ) {
     super(message)
   }
 }
@@ -18,18 +19,42 @@ export interface FetchOptions {
   headers?: Record<string, string>
 }
 
-export async function fetchJson<T>(url: string, options: FetchOptions = {}): Promise<T> {
-  const { timeoutMs = 20000, retries = 2, headers } = options
+/**
+ * Runs one request against the official host and its BMCLAPI twin, in the order
+ * the network state prefers. A blocked Mojang endpoint therefore costs one fast
+ * timeout, not a dead installer.
+ */
+async function requestWithFallback(url: string, options: FetchOptions, accept: string): Promise<Response> {
+  const { timeoutMs = 20000, headers } = options
+  const candidates = urlCandidates(url)
   let lastError: Error | null = null
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (const candidate of candidates) {
     try {
-      const response = await fetch(url, {
-        headers: { 'User-Agent': USER_AGENT, Accept: 'application/json', ...headers },
+      const response = await mirrorFetch(candidate, {
+        headers: { 'User-Agent': USER_AGENT, Accept: accept, ...headers },
         signal: AbortSignal.timeout(timeoutMs)
       })
       if (!response.ok) {
-        throw new NetworkError(`HTTP ${response.status} для ${url}`, response.status)
+        lastError = new NetworkError(`HTTP ${response.status} для ${candidate}`, response.status)
+        // 4xx is a real answer — retrying the mirror will not change it.
+        if (response.status < 500 && response.status !== 403 && response.status !== 408) break
+        continue
       }
+      return response
+    } catch (error) {
+      lastError = error as Error
+      if ((error as Error).name === 'AbortError') lastError = new NetworkError(`Таймаут ${timeoutMs} мс: ${candidate}`)
+    }
+  }
+  throw lastError instanceof NetworkError ? lastError : new NetworkError(lastError?.message ?? `network_error: ${url}`)
+}
+
+export async function fetchJson<T>(url: string, options: FetchOptions = {}): Promise<T> {
+  const { retries = 2 } = options
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await requestWithFallback(url, options, 'application/json')
       return (await response.json()) as T
     } catch (error) {
       lastError = error as Error
@@ -40,15 +65,11 @@ export async function fetchJson<T>(url: string, options: FetchOptions = {}): Pro
 }
 
 export async function fetchText(url: string, options: FetchOptions = {}): Promise<string> {
-  const { timeoutMs = 20000, retries = 2 } = options
+  const { retries = 2 } = options
   let lastError: Error | null = null
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(url, {
-        headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(timeoutMs)
-      })
-      if (!response.ok) throw new NetworkError(`HTTP ${response.status} для ${url}`, response.status)
+      const response = await requestWithFallback(url, options, 'text/plain')
       return await response.text()
     } catch (error) {
       lastError = error as Error
@@ -58,43 +79,34 @@ export async function fetchText(url: string, options: FetchOptions = {}): Promis
   throw lastError instanceof NetworkError ? lastError : new NetworkError(lastError?.message ?? 'network_error')
 }
 
+/**
+ * Streams a file to disk (never into RAM), resumes a `.part` file when one is
+ * left over and checks the SHA1 only when the caller supplies one.
+ */
 export async function downloadFile(
   url: string,
   destination: string,
   onProgress?: (received: number, total: number) => void,
-  options: { signal?: AbortSignal; retries?: number; headers?: Record<string, string> } = {}
+  options: { signal?: AbortSignal; retries?: number; headers?: Record<string, string>; name?: string; sha1?: string; size?: number } = {}
 ): Promise<void> {
-  const retries = options.retries ?? 2
-  await mkdir(dirname(destination), { recursive: true })
-  let lastError: Error | null = null
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const tmp = `${destination}.part`
-    try {
-      const response = await fetch(url, {
-        headers: { 'User-Agent': USER_AGENT, ...options.headers },
-        signal: options.signal ?? AbortSignal.timeout(120_000)
-      })
-      if (!response.ok || !response.body) {
-        throw new NetworkError(`HTTP ${response.status} для ${url}`, response.status)
+  let total = options.size ?? 0
+  let received = 0
+  await downloadSpec(
+    { url, destination, sha1: options.sha1, size: options.size, name: options.name ?? destination.split(/[\\/]/).pop() },
+    {
+      signal: options.signal,
+      headers: options.headers,
+      retries: options.retries,
+      onTotal: (bytes) => {
+        total = bytes
+        onProgress?.(received, total)
+      },
+      onBytes: (bytes) => {
+        if (bytes < 0) return
+        received += bytes
+        // eslint-disable-next-line no-param-reassign -- progress totals grow with resume
+        onProgress?.(received, Math.max(total, received))
       }
-      const total = Number(response.headers.get('content-length') ?? 0)
-      let received = 0
-      const nodeStream = Readable.fromWeb(response.body as never)
-      if (onProgress) {
-        nodeStream.on('data', (chunk: Buffer) => {
-          received += chunk.length
-          onProgress(received, total)
-        })
-      }
-      await pipeline(nodeStream, createWriteStream(tmp))
-      await rename(tmp, destination)
-      return
-    } catch (error) {
-      lastError = error as Error
-      await rm(tmp, { force: true }).catch(() => undefined)
-      if (attempt < retries) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)))
     }
-  }
-  throw lastError instanceof NetworkError ? lastError : new NetworkError(lastError?.message ?? `download_failed: ${url}`)
+  )
 }

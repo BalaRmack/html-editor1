@@ -15,12 +15,14 @@ import {
   Terminal,
   Timer,
   UserRound,
+  WifiOff,
   CheckCircle2
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { formatDuration } from '../../../shared/constants'
+import { formatEta, formatSpeed } from '../../../shared/format'
 import { LOADER_LABELS, type Instance } from '../../../shared/types'
-import { pluralCount, useT, type TKey } from '../i18n'
+import { localizeError, pluralCount, useT } from '../i18n'
 import { cn, formatGb, instanceGradient, relativeTime } from '../lib/utils'
 import { useAppStore } from '../store/app'
 import { ScreenHeader } from '../components/layout'
@@ -82,7 +84,8 @@ export function PlayScreen(): JSX.Element {
 
   const busy = ['checking', 'downloading', 'starting'].includes(game.state)
   const running = game.state === 'running'
-  const activeTask = task && task.status === 'running' ? task : null
+  // `waiting` is a live task too: the network dropped, the install is resumable.
+  const activeTask = task && (task.status === 'running' || task.status === 'waiting') ? task : null
 
   // Download state of the selected instance. «Играть» unlocks only on `ok`,
   // which is produced by a real integrity check, never by the downloader.
@@ -91,6 +94,8 @@ export function PlayScreen(): JSX.Element {
   const failed = state.status === 'error'
   const playable = state.status === 'ok' && instance?.installed === true
   const errorCode = state.status === 'error' ? state.code : null
+  // A network failure is a waiting room, not a dead end: the retry resumes.
+  const waitingNetwork = activeTask?.status === 'waiting' || errorCode === 'network_error'
   const errorFile = state.status === 'error' ? state.file : undefined
   const errorReport = state.status === 'error' ? state.report : undefined
   const problemCount = errorReport ? errorReport.missing.length + errorReport.truncatedIssues : 0
@@ -283,14 +288,15 @@ export function PlayScreen(): JSX.Element {
                           <AlertTriangle className="h-4 w-4" />
                         </span>
                         <div className="min-w-0 flex-1">
-                          <div className="text-[12px] font-semibold text-rose-100">{t('play.errorTitle')}</div>
-                          <div className="mt-0.5 text-[11px] leading-relaxed text-rose-200/80">
-                            {errorCode === 'network_error' && errorFile
-                              ? t('errors.network_error', { file: errorFile })
-                              : errorCode
-                                ? t(`errors.${errorCode}` as TKey)
-                                : t('errors.unknown')}
+                          <div className="text-[12px] font-semibold text-rose-100">
+                            {errorCode === 'network_error' ? t('play.waitingNetwork') : t('play.errorTitle')}
                           </div>
+                          <div className="mt-0.5 text-[11px] leading-relaxed text-rose-200/80">
+                            {localizeError(t, errorCode ?? undefined, errorFile ? { file: errorFile } : undefined)}
+                          </div>
+                          {waitingNetwork ? (
+                            <div className="mt-1 text-[10.5px] leading-relaxed text-amber-200/80">{t('play.waitingHint')}</div>
+                          ) : null}
                           {problemCount > 0 ? (
                             <div className="mt-1 text-[10.5px] text-rose-200/60">
                               {t('play.missingFiles', { count: problemCount })}
@@ -323,10 +329,35 @@ export function PlayScreen(): JSX.Element {
                   {downloading || (activeTask && activeTask.instanceId === instance.id) ? (
                     <div className="w-full max-w-[420px] rounded-2xl border border-white/10 bg-black/30 p-3.5 backdrop-blur">
                       <div className="mb-2 flex items-center justify-between gap-3 text-[11px]">
-                        <span className="truncate text-text/85">{activeTask?.stage}</span>
-                        <span className="text-faint">{activeTask && activeTask.total > 0 ? `${Math.round((activeTask.current / activeTask.total) * 100)}%` : '…'}</span>
+                        <span className="flex min-w-0 items-center gap-1.5 truncate text-text/85">
+                          {waitingNetwork ? (
+                            <span className="flex-none rounded-md bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                              {t('play.waitingNetwork')}
+                            </span>
+                          ) : null}
+                          <span className="truncate">{activeTask?.stage}</span>
+                        </span>
+                        <span className="flex-none font-mono tabular-nums text-emerald-soft">
+                          {typeof activeTask?.percent === 'number' ? `${Math.floor(activeTask.percent)}%` : '…'}
+                        </span>
                       </div>
-                      <ProgressBar value={activeTask?.current ?? 0} total={activeTask?.total ?? 1} />
+                      <ProgressBar percent={activeTask?.percent} value={activeTask?.current ?? 0} total={activeTask?.total ?? 1} />
+                      <div className="mt-2 flex items-center justify-between gap-3 text-[10.5px] text-faint">
+                        <span className="flex items-center gap-1.5">
+                          <Download className="h-3 w-3 text-emerald-soft/80" />
+                          {t('play.speed')}: {formatSpeed(activeTask?.bytesPerSecond ?? 0)}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <Timer className="h-3 w-3 text-emerald-soft/80" />
+                          {t('play.eta')}: {formatEta(activeTask?.etaSeconds ?? null)}
+                        </span>
+                      </div>
+                      {activeTask?.status === 'waiting' ? (
+                        <div className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-snug text-amber-200/75">
+                          <WifiOff className="mt-0.5 h-3 w-3 flex-none" />
+                          {t('play.waitingHint')}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

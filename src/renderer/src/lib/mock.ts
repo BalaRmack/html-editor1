@@ -203,6 +203,40 @@ const mockControl = {
   },
   repair(id: string): void {
     delete brokenFiles[id]
+  },
+  /** Demo only: replays the install progress stream so the UI can be reviewed. */
+  demoInstall(instanceId = 'a1'): void {
+    void tick(
+      'Установка «Verdant Tech 1.21.4»',
+      [
+        { key: 'manifest', label: 'Чтение манифеста версии', total: 6, unit: 'files', ms: 400 },
+        { key: 'version', label: 'Загрузка файлов игры', total: 268 * MB, ms: 1800 },
+        { key: 'loader', label: 'Установка загрузчика', total: 24 * MB, ms: 900 },
+        { key: 'libraries', label: 'Библиотеки, ассеты и natives', total: 940 * MB, ms: 4200, steps: 20 }
+      ],
+      instanceId
+    )
+  },
+  /** Demo only: shows the «Ожидание сети» state with the resume hint. */
+  demoWaiting(instanceId = 'a1'): void {
+    const id = `mock-wait-${Date.now()}`
+    taskListeners.forEach((listener) =>
+      listener({
+        id,
+        label: 'Установка «Verdant Tech 1.21.4»',
+        stage: 'Библиотеки, ассеты и natives',
+        stageKey: 'libraries',
+        current: 612 * MB,
+        total: 940 * MB,
+        unit: 'bytes',
+        status: 'waiting',
+        instanceId,
+        percent: 62,
+        bytesPerSecond: 0,
+        etaSeconds: null,
+        retryable: true
+      })
+    )
   }
 }
 
@@ -535,13 +569,38 @@ const tick = async (
   instanceId?: string
 ): Promise<void> => {
   const id = `mock-task-${Date.now()}`
-  const emit = (stage: string, current: number, total: number, unit: 'bytes' | 'files', stageKey?: string): void => {
+  // Mirrors the payload the real main process sends: one monotonic percent for
+  // the whole install plus the live speed/ETA of the byte phases.
+  const emit = (
+    stage: string,
+    current: number,
+    total: number,
+    unit: 'bytes' | 'files',
+    stageKey: string | undefined,
+    overall: number,
+    speed: number,
+    eta: number | null
+  ): void => {
     taskListeners.forEach((listener) =>
-      listener({ id, label, stage, stageKey, current, total, unit, status: 'running', instanceId })
+      listener({
+        id,
+        label,
+        stage,
+        stageKey,
+        current,
+        total,
+        unit,
+        status: 'running',
+        instanceId,
+        percent: overall,
+        bytesPerSecond: unit === 'bytes' ? speed : undefined,
+        etaSeconds: unit === 'bytes' ? eta : null
+      })
     )
   }
 
-  for (const entry of stages) {
+  const stageCount = stages.length
+  for (const [index, entry] of stages.entries()) {
     const stage: MockStage =
       typeof entry === 'string' ? { key: '', label: entry, total: 6, unit: 'files', ms: 420 } : entry
     const total = stage.total
@@ -549,13 +608,19 @@ const tick = async (
     const frames = stage.steps ?? 14
     const stepMs = Math.max(60, (stage.ms ?? 1500) / frames)
     for (let frame = 0; frame <= frames; frame++) {
-      emit(stage.label, Math.round((total * frame) / frames), total, unit, stage.key || undefined)
+      const ratio = total > 0 ? frame / frames : 0
+      const current = Math.round(total * ratio)
+      const overall = Math.min(99, Math.round(((index + ratio) / stageCount) * 100))
+      // 9–13 MB/s with a gentle wobble: reads like a real CDN, not a spinner.
+      const speed = (9.4 + Math.sin(frame / 2.2) * 1.8) * MB
+      const eta = total > current && unit === 'bytes' ? Math.round((total - current) / speed) : null
+      emit(stage.label, current, total, unit, stage.key || undefined, overall, speed, eta)
       if (frame < frames) await sleep(stepMs)
     }
   }
 
   taskListeners.forEach((listener) =>
-    listener({ id, label, stage: 'Готово', current: 1, total: 1, unit: 'steps', status: 'done', instanceId })
+    listener({ id, label, stage: 'Готово', current: 1, total: 1, unit: 'steps', status: 'done', instanceId, percent: 100 })
   )
   await sleep(260)
 }

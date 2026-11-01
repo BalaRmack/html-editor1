@@ -443,10 +443,13 @@ export function CreateInstanceModal(): JSX.Element | null {
 
   // A single honest percentage across the whole pipeline, weighted per stage.
   const stageFraction = activeTask && activeTask.total > 0 ? Math.min(1, activeTask.current / activeTask.total) : 0
-  const percent =
-    phase === 'progress'
-      ? Math.min(99, Math.round(((rowIndex + stageFraction) / pipeline.length) * 100))
-      : null
+  // The main process already reports one monotonic percentage for the whole
+  // install; the per-stage estimate below is only a fallback for older payloads.
+  const estimated = Math.round(((rowIndex + stageFraction) / pipeline.length) * 100)
+  const rawPercent = Math.min(99, typeof activeTask?.percent === 'number' ? Math.round(activeTask.percent) : estimated)
+  const percentRef = useRef(0)
+  percentRef.current = Math.max(percentRef.current, rawPercent)
+  const percent = phase === 'progress' ? percentRef.current : null
 
   const runInstall = async (instance: Instance): Promise<void> => {
     setInstallMode('version')

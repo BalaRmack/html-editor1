@@ -33,6 +33,7 @@ import { curseforgeFile, curseforgePackVersions, curseforgeProject, curseforgeSe
 import { instances } from './instances'
 import { installer } from './installer'
 import { logger } from './logger'
+import { downloadBatch, settleAll } from './downloader'
 import { downloadFile } from './net'
 import {
   modrinthProject,
@@ -586,31 +587,58 @@ export class ModsService {
       await instances.setVersionInfo(created.id, outcome.versionId, outcome.loaderVersion, outcome.mcVersion)
 
       const gameDir = created.gameDir
+      // One failed mod must never abort the pack: every file is downloaded inside
+      // a bounded pool, failures are collected per file and reported at the end.
+      const failedMods: string[] = []
       if (input.source === 'modrinth') {
         const plannedBytes = index.files.reduce((sum, file) => sum + (file.fileSize || 0), 0)
         let doneBytes = 0
-        task.stage('Файлы сборки', 0, plannedBytes, 'bytes', 'packFiles')
         for (const file of index.files) {
-          const target = safeJoin(gameDir, file.path)
-          await mkdir(resolve(target, '..'), { recursive: true })
-          await downloadFile(file.downloadUrl, target, (received, total) => {
-            task.stage('Файлы сборки', doneBytes + received, plannedBytes || doneBytes + (total || file.fileSize || 0), 'bytes', 'packFiles')
-          })
-          doneBytes += file.fileSize || 0
-          task.stage('Файлы сборки', doneBytes, plannedBytes, 'bytes', 'packFiles')
+          await mkdir(resolve(safeJoin(gameDir, file.path), '..'), { recursive: true })
         }
-      } else if (index.curseFiles) {
+        task.stage('Файлы сборки', 0, plannedBytes, 'bytes', 'packFiles')
+        const report = await downloadBatch(
+          index.files.map((file) => ({
+            url: file.downloadUrl,
+            destination: safeJoin(gameDir, file.path),
+            size: file.fileSize || undefined,
+            name: basename(file.path)
+          })),
+          {
+            // 12 sockets: fast on a good line, still polite to the CDN.
+            concurrency: 12,
+            onBytes: (bytes) => {
+              doneBytes = Math.max(0, doneBytes + bytes)
+              task.stage('Файлы сборки', Math.min(doneBytes, plannedBytes || doneBytes), plannedBytes || doneBytes, 'bytes', 'packFiles')
+            }
+          }
+        )
+        for (const failure of report.failed) failedMods.push(failure.spec.name ?? failure.spec.url)
+        logger.info(`Сборка: скачано ${report.downloaded}, уже было ${report.skipped}, ошибок ${report.failed.length}`)
+      } else if (index.curseFiles && index.curseFiles.length > 0) {
         task.stage('Скачивание модов CurseForge', 0, index.curseFiles.length, 'files', 'packFiles')
         const manifest: Manifest = { mods: {} }
         let fetched = 0
-        for (const file of index.curseFiles) {
+        const modsDir = join(gameDir, 'mods')
+        await mkdir(modsDir, { recursive: true })
+        // CurseForge needs a metadata round-trip per file, so the pool wraps the
+        // lookup *and* the download; a 404 on one mod is just one red line.
+        const curseFiles = index.curseFiles
+        await settleAll(curseFiles, 8, async (file) => {
           const matching = await curseforgeFile(file.projectId, file.fileId, settings.curseForgeApiKey).catch(() => null)
-          if (!matching) continue
-          const target = join(gameDir, 'mods', basename(matching.fileName))
-          await mkdir(join(gameDir, 'mods'), { recursive: true })
-          await downloadFile(matching.downloadUrl, target)
+          if (!matching) {
+            failedMods.push(`CurseForge #${file.projectId}`)
+            return
+          }
+          const target = join(modsDir, basename(matching.fileName))
+          await downloadFile(
+            matching.downloadUrl,
+            target,
+            undefined,
+            { name: basename(matching.fileName), size: matching.fileSize }
+          )
           fetched += 1
-          task.stage('Скачивание модов CurseForge', fetched, index.curseFiles.length, 'files', 'packFiles')
+          task.stage('Скачивание модов CurseForge', fetched, curseFiles.length, 'files', 'packFiles')
           manifest.mods[file.projectId] = {
             projectId: file.projectId,
             fileName: basename(matching.fileName),
@@ -620,8 +648,17 @@ export class ModsService {
             source: 'curseforge',
             installedAt: new Date().toISOString()
           }
-        }
+        }).then((outcome) => {
+          for (const failure of outcome.failed) failedMods.push(failure.error.message.slice(0, 80))
+        })
         await this.writeManifest(created.id, manifest)
+      }
+
+      if (failedMods.length > 0) {
+        // The pack is playable — the missing mods are reported, not thrown away.
+        logger.warn(`Не удалось скачать ${failedMods.length} файл(ов): ${failedMods.slice(0, 8).join(', ')}`)
+        task.metrics({ failedFiles: failedMods.length })
+        task.stage(`Сборка установлена без ${failedMods.length} файл(ов)`, 0, 0, 'steps', 'packFiles')
       }
 
       const overrides = join(tempDir, index.overridesDir)

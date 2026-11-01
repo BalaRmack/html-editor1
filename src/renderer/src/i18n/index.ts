@@ -48,6 +48,11 @@ export const ru = {
   'play.verified': 'Файлы проверены',
   'play.missingFiles': 'Проблемных файлов: {count}',
   'play.retry': 'Повторить загрузку',
+  'play.waitingNetwork': 'Ожидание сети',
+  'play.waitingHint': 'Связь пропала. Уже скачанное сохранено — нажмите «Повторить», загрузка продолжится с того же места.',
+  'play.speed': 'Скорость',
+  'play.eta': 'Осталось',
+  'play.downloading': 'Загрузка файлов',
   'play.notInstalled': 'Нужна установка',
   'play.profileCard': 'Профиль игрока',
   'play.offline': 'Offline-аккаунт',
@@ -558,6 +563,11 @@ export const en: Record<TKey, string> = {
   'play.verified': 'Files verified',
   'play.missingFiles': 'Problem files: {count}',
   'play.retry': 'Retry download',
+  'play.waitingNetwork': 'Waiting for network',
+  'play.waitingHint': 'The connection dropped. Everything already downloaded is kept — press “Retry” to resume from the same point.',
+  'play.speed': 'Speed',
+  'play.eta': 'Left',
+  'play.downloading': 'Downloading files',
   'play.notInstalled': 'Needs install',
   'play.profileCard': 'Player profile',
   'play.offline': 'Offline account',
@@ -1063,9 +1073,21 @@ export function localizeError(
 ): string {
   if (!code) return t('errors.unknown')
   const key = `errors.${code}` as TKey
-  if (key in ru) return t(key, vars)
-  // Fall back to a neutral sentence — never show a raw stack/URL as the message.
-  return t('errors.unknown')
+  if (!(key in ru)) {
+    // Fall back to a neutral sentence — never show a raw stack/URL as the message.
+    return t('errors.unknown')
+  }
+  // A template with an unfilled placeholder used to reach the screen as
+  // «Не удалось скачать файл «{file}»». If any placeholder lacks a value we use
+  // the generic sentence for that code instead of printing braces to the user.
+  const missing = [...ru[key].matchAll(/\{(\w+)\}/g)]
+    .map((match) => match[1])
+    .filter((name) => vars?.[name] === undefined)
+  if (missing.length > 0) {
+    const generic = `${key}.generic` as TKey
+    if (generic in ru) return t(generic, vars)
+  }
+  return t(key, vars)
 }
 
 /** True when the code has a dedicated localised sentence. */

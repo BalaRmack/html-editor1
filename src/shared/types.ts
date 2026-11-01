@@ -293,7 +293,11 @@ export interface LogLine {
   text: string
 }
 
-export type TaskStatus = 'running' | 'done' | 'error'
+/**
+ * `waiting` is the "network is down, come back in a second" state: the install
+ * is alive and resumable, it is not cancelled.
+ */
+export type TaskStatus = 'running' | 'waiting' | 'done' | 'error'
 
 export interface TaskProgress {
   id: string
@@ -307,6 +311,16 @@ export interface TaskProgress {
   status: TaskStatus
   message?: string
   instanceId?: string
+  /** 0..100 overall install progress; monotonic, computed by the main process. */
+  percent?: number
+  /** Smoothed download speed, bytes per second. */
+  bytesPerSecond?: number
+  /** Seconds until the current phase finishes, `null` when unknown. */
+  etaSeconds?: number | null
+  /** True when the failed task can be resumed with the same button. */
+  retryable?: boolean
+  /** How many files already failed inside this task (per-mod isolation). */
+  failedFiles?: number
 }
 
 export type GameState = 'idle' | 'checking' | 'downloading' | 'starting' | 'running' | 'exited'

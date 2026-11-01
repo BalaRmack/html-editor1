@@ -1,6 +1,7 @@
 import { getLoaderArtifactListFor, getQuiltLoaderVersionsByMinecraft, getVersionList } from '@xmcl/installer'
 import { FORGE_MAVEN, NEOFORGE_MAVEN } from '../../shared/constants'
 import type { LoaderType, LoaderVersion, VersionSummary } from '../../shared/types'
+import { mirrorFetch } from './downloader'
 import { fetchJson, fetchText } from './net'
 import { logger } from './logger'
 
@@ -64,7 +65,7 @@ export function neoForgePrefix(mcVersion: string): string {
 export class VersionService {
   async listMinecraft(): Promise<VersionSummary[]> {
     return cached(minecraftCache, 'all', async () => {
-      const list = await getVersionList()
+      const list = await getVersionList({ fetch: mirrorFetch })
       return list.versions
         .map((version) => ({ id: version.id, type: version.type, releaseTime: version.releaseTime }))
         .sort((a, b) => Date.parse(b.releaseTime) - Date.parse(a.releaseTime))
@@ -84,13 +85,15 @@ export class VersionService {
   private async fetchLoaders(mcVersion: string, loader: LoaderType): Promise<LoaderVersion[]> {
     switch (loader) {
       case 'fabric': {
-        const artifacts = await getLoaderArtifactListFor(mcVersion)
+        // `fetch` here is the mirror-aware client: meta.fabricmc.net is
+        // rewritten to BMCLAPI when the official host is blocked.
+        const artifacts = await getLoaderArtifactListFor(mcVersion, { fetch: mirrorFetch })
         return artifacts
           .map((artifact) => ({ version: artifact.loader.version, stable: artifact.loader.stable }))
           .sort((a, b) => compareVersionsDesc(a.version, b.version))
       }
       case 'quilt': {
-        const artifacts = await getQuiltLoaderVersionsByMinecraft({ minecraftVersion: mcVersion })
+        const artifacts = await getQuiltLoaderVersionsByMinecraft({ minecraftVersion: mcVersion, fetch: mirrorFetch })
         return artifacts
           .map((artifact) => ({ version: artifact.loader.version, stable: artifact.loader.stable }))
           .sort((a, b) => compareVersionsDesc(a.version, b.version))

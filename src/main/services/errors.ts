@@ -56,7 +56,7 @@ export function toFailure(error: unknown, stage?: string): FailureShape {
     }
   }
 
-  const err = error as (Error & { code?: string; url?: string; errors?: unknown[] }) | undefined
+  const err = error as (Error & { code?: string; url?: string; file?: string; errors?: unknown[] }) | undefined
   // AggregateError / bare rejections surface with an empty message — dig one
   // level deeper so the user never sees «Установка не удалась: » with nothing.
   const nested = Array.isArray(err?.errors) ? err?.errors.find((item) => (item as Error)?.message) : undefined
@@ -83,11 +83,14 @@ export function toFailure(error: unknown, stage?: string): FailureShape {
     )
 
   const url = err?.url ?? extractUrl(message)
+  // A downloader error knows the exact file even when the message carries no URL
+  // — that is what fills `{file}` in the toast instead of leaving the template.
+  const file = err?.file ?? (url ? fileNameFromUrl(url) : extractQuotedFile(message))
   if (networkLike) {
     return {
       code: 'network_error',
-      message: url ? `Не удалось скачать файл ${fileNameFromUrl(url)}` : 'Сеть недоступна или сервер не отвечает',
-      file: url ? fileNameFromUrl(url) : undefined,
+      message: file ? `Не удалось скачать файл ${file}` : 'Сеть недоступна или сервер не отвечает',
+      file,
       stage,
       retryable: true
     }
@@ -97,8 +100,8 @@ export function toFailure(error: unknown, stage?: string): FailureShape {
   const friendly = message && !/^(aggregate)?error$/i.test(message) ? message : 'Не удалось завершить установку'
   return {
     code: 'install_failed',
-    message: /timeout|timed out/i.test(message) ? `Сервер не ответил вовремя${url ? ` (${fileNameFromUrl(url)})` : ''}` : friendly,
-    file: url ? fileNameFromUrl(url) : undefined,
+    message: /timeout|timed out/i.test(message) ? `Сервер не ответил вовремя${file ? ` (${file})` : ''}` : friendly,
+    file,
     stage,
     retryable: true
   }
@@ -110,6 +113,12 @@ export function extractUrl(text: string): string | undefined {
   const match = text.match(URL_RE)
   // Log lines often glue punctuation to the URL: `...client.jar: ECONNRESET`.
   return match ? match[0].replace(/[.,;:!?]+$/, '') : undefined
+}
+
+/** Pulls a file name out of `... (C:\...\assets\indexes\34.json)`-style text. */
+export function extractQuotedFile(text: string): string | undefined {
+  const match = text.match(/([\w.-]+\.[a-zA-Z0-9]{2,5})(?=[)\s'"]|$)/)
+  return match ? match[1] : undefined
 }
 
 /** `https://x/y/z/client.jar?q=1` → `client.jar`. */
