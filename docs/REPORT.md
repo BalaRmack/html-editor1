@@ -122,3 +122,45 @@ src/renderer/ i18n RU/EN, store (Zustand), components, features/{play,instances,
    поэтому UI проверен jsdom-тестами, сборка — Windows-раннером GitHub Actions, а скачивание игры —
    отдельным CI-джобом с реальными запросами к Mojang. Первый локальный запуск на вашей машине стоит
    сделать через `npm run dev`.
+
+---
+
+## 7. Обновление: ошибки загрузки и свой установщик
+
+### 7.1. Загрузка больше не «притворяется успешной»
+
+Раньше прерванное скачивание заканчивалось кнопкой «Играть» — запуск падал уже в игре. Теперь:
+
+| Что | Как |
+|---|---|
+| Ошибки скачивания | `try/catch` вокруг assets/libraries/natives + `TaskRoutine` → `InstallRunResult { ok, code, message, file, stage, retryable, report }` |
+| Реальный текст ошибки | `AppError`/`toFailure` разбирают сообщение xmcl, вытаскивают URL и имя файла (`Ошибка сети. Не удалось скачать файл «client-1.21.4.jar»`) |
+| Тост | красный sticky-тост с текстом ошибки и кнопкой «Повторить» (`ToastHost` + `ToastItem.action`) |
+| Проверка целостности | `install.verify` → `checkIntegrity()`: client jar, библиотеки, нативы, index + все объекты ассетов; отчёт `IntegrityReport` |
+| Кнопка «Играть» | активна только при `integrity[id].status === 'ok'`; иначе — disabled CTA «Ошибка загрузки» + карточка «Файлы игры не скачаны» (первые 3 файла, «Проблемных файлов: N») и «Повторить загрузку» / «Проверить снова» |
+| Повтор | `retryInstall` переиспользует уже созданный инстанс, докачивает только недостающее |
+| Отмена | не считается ошибкой: статус `unknown`, тоста нет |
+
+Скриншоты: `docs/screens/download-error.png`, `docs/screens/download-failed-toast.png`.
+Тесты: `tests/integrity.test.ts` (9), `tests/download-errors.test.tsx` (4), плюс гейтинг в `ui.test.tsx` / `create-instance.test.tsx`.
+
+### 7.2. Установщик и деинсталлятор в стиле Verdant
+
+`electron-builder` → NSIS 3, assisted-режим. Внешний каркас мастера остаётся нативным (иначе ломаются UAC,
+тихие обновления и системные кнопки), но всё содержимое перерисовано:
+
+- `build/installer/generate.py` рендерит битмапы (Inter, тёмный фон `#0B0D0C`, изумрудные акценты):
+  `installerSidebar.bmp` / `uninstallerSidebar.bmp` 164×314, `installerHeader.bmp` / `uninstallerHeader.bmp` 150×57, `logo.bmp` 56×56;
+- `build/installer.nsh` (через `nsis.include`) задаёт тему MUI: `MUI_BGCOLOR`/`MUI_TEXTCOLOR` — тёмные страницы,
+  `MUI_INSTFILESPAGE_COLORS` + `MUI_INSTFILESPAGE_PROGRESSBAR colored` — изумрудный прогресс-бар на тёмном фоне;
+- приветствие и финиш — с текстами Verdant, на финише галочка «Запустить Verdant Launcher»;
+- **деинсталлятор**: своя страница «Удаление Verdant Launcher» с галочкой «Удалить настройки и сохранения»
+  (+ подпись `%APPDATA%\Verdant`) и кнопками «Удалить» / «Отмена»; данные удаляются только если галочка стоит
+  (`customUnInstall` → `RMDir /r "$APPDATA\Verdant"`), иначе настройки и миры остаются;
+- шрифт скрипта — UTF-8 с BOM (иначе NSIS на Windows теряет кириллицу).
+
+Проверки: `tests/installer.test.ts` (6) — размеры битмапов, соответствие `electron-builder.yml`, BOM, наличие удаления данных;
+скрипт собран настоящим `makensis` (Linux-сборка NSIS 3.13) в MUI-мастер — 0 ошибок и предупреждений.
+Полная сборка `.exe` идёт на Windows-раннере (job `installer` в CI) и в Release-workflow.
+
+Превью: `docs/screens/installer-welcome.png`, `installer-progress.png`, `installer-finish.png`, `uninstaller.png`.

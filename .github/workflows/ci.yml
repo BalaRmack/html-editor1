@@ -44,6 +44,36 @@ jobs:
       - name: Build
         run: npm run build:only
 
+  installer:
+    name: Windows installer (NSIS wizard)
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build main + renderer
+        run: npm run build:only
+
+      # Compiles build/installer.nsh for real: the wizard, its bitmaps and the
+      # uninstaller page are only exercised by makensis.
+      - name: Package NSIS installer
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdant-launcher-setup
+          path: release/*.exe
+          if-no-files-found: error
+
   network:
     name: Live API integration (Mojang / Fabric / Modrinth)
     runs-on: windows-latest
