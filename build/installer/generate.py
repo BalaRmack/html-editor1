@@ -287,7 +287,7 @@ def preview() -> None:
         draw.text((40, 149), 'Запустить Verdant Launcher', font=font('Medium', 9), fill=TEXT, anchor='lm')
 
     _window(_page('emerald', 'Установка Verdant Launcher', 'Готово', finish_body),
-            'emerald', [('Готово', 'primary'), ('Отмена', 'ghost')]).save(os.path.join(shots, 'installer-finish.png'))
+            'emerald', [('Готово', 'primary')]).save(os.path.join(shots, 'installer-finish.png'))
 
     def uninstall_body(page, draw):
         draw.text((18, 74), 'Удаление Verdant Launcher', font=font('Bold', 13), fill=TEXT)

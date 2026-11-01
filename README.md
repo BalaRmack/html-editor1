@@ -146,7 +146,7 @@ Renderer не имеет доступа к `fs`/`path`/`child_process` — то�
 
 | Workflow | Триггер | Что делает |
 |---|---|---|
-| `.github/workflows/ci.yml` | push в `main` / `arena/**`, PR | typecheck, юнит- и UI-тесты, сборка; отдельный job — живые тесты Mojang/Fabric/Modrinth |
+| `.github/workflows/ci.yml` | push в `main` / `arena/**`, PR | typecheck, юнит- и UI-тесты, сборка; отдельный job собирает настоящий NSIS-установщик (артефакт), ещё один — живые тесты Mojang/Fabric/Modrinth |
 | `.github/workflows/release.yml` | тег `v*` | тесты → сборка → `electron-builder` NSIS `.exe` → GitHub Release с артефактом |
 
 Релиз:
@@ -158,6 +158,23 @@ git push origin v1.0.0
 
 Установщик создаёт ярлыки на Рабочем столе и в меню «Пуск», иконку приложения
 (`build/icon.ico`), поддерживает выбор папки установки. Артефакт — `Verdant-Launcher-<version>-Setup.exe`.
+
+### Мастер установки
+
+Установщик и деинсталлятор используют собственный NSIS-скрипт `build/installer.nsh`
+(подключается через `nsis.include`): тёмные страницы, изумрудный прогресс-бар,
+брендированные сайдбар и шапка, а у деинсталлятора — страница с галочкой
+«Удалить настройки и сохранения» и кнопками «Удалить» / «Отмена».
+
+Битмапы мастера рендерятся заранее, чтобы в установщике не было «системного» вида:
+
+```bash
+python3 build/installer/generate.py            # build/installer/*.bmp
+python3 build/installer/generate.py --preview  # + docs/screens/installer-*.png
+```
+
+Скрипт проверяется `tests/installer.test.ts` (размеры битмапов, привязка в
+`electron-builder.yml`, UTF-8 BOM) и реальной сборкой `.exe` в CI.
 
 ---
 

@@ -164,3 +164,8 @@ src/renderer/ i18n RU/EN, store (Zustand), components, features/{play,instances,
 Полная сборка `.exe` идёт на Windows-раннере (job `installer` в CI) и в Release-workflow.
 
 Превью: `docs/screens/installer-welcome.png`, `installer-progress.png`, `installer-finish.png`, `uninstaller.png`.
+
+**Сборка проверена на Windows-раннере:** job `Windows installer (NSIS wizard)` в CI компилирует
+установщик настоящим `makensis` (NSIS 3.0.4.1) и публикует артефакт `verdant-launcher-setup` (116 МБ) —
+`Verdant-Launcher-1.0.0-Setup.exe`. Первые прогоны падали на `warning 6001` (electron-builder собирает
+с `-WX`, любое предупреждение — ошибка); исправлено инициализацией всех переменных скрипта в обоих проходах.
