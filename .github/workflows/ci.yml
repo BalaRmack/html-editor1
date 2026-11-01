@@ -70,9 +70,9 @@ jobs:
           set -o pipefail
           if ! npx electron-builder --win nsis --x64 --publish never 2>&1 | tee nsis-build.log; then
             N=0
-            tail -n 40 nsis-build.log | while IFS= read -r line; do
+            grep -inE "error|abort|invalid|not found|cannot" nsis-build.log | tail -n 10 | while IFS= read -r line; do
               N=$((N + 1))
-              echo "::error title=nsis-$N::$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-900)"
+              echo "::error title=E$N::$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-800)"
             done
             exit 1
           fi
