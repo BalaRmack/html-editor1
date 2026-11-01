@@ -182,13 +182,29 @@ Var vdBitmap           ; scratch bitmap handle
 !macro customHeader
 !macroend
 
-/* Installer side: initialise the uninstaller flag so the variable is always
- * set (NSIS aborts on "variable never set" warnings when built with -WX). */
-!macro customInit
+/*
+ * Resets every variable this file owns. Both passes (installer and
+ * uninstaller) call it: makensis is invoked with -WX by electron-builder, so a
+ * variable that is declared but never referenced would fail the build.
+ */
+!macro VD_RESET_STATE
   StrCpy $vdWipeUserData "0"
+  StrCpy $vdUnPage 0
+  StrCpy $vdUnLogo 0
+  StrCpy $vdUnTitle 0
+  StrCpy $vdUnSubtitle 0
+  StrCpy $vdUnCheckbox 0
+  StrCpy $vdUnHint 0
+  StrCpy $vdUnFootnote 0
+  StrCpy $vdBitmap 0
 !macroend
 
-/* Uninstaller side: same, before any page runs (also covers silent /S runs). */
+/* Installer side. */
+!macro customInit
+  !insertmacro VD_RESET_STATE
+!macroend
+
+/* Uninstaller side: also covers silent /S runs, where no page is created. */
 !macro customUnInit
-  StrCpy $vdWipeUserData "0"
+  !insertmacro VD_RESET_STATE
 !macroend
