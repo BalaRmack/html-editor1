@@ -177,9 +177,18 @@ Var vdBitmap           ; scratch bitmap handle
   ${EndIf}
 !macroend
 
-/* electron-builder looks for these two; nothing to do — the theme is defines. */
+/* =====================================================  init hooks */
+
 !macro customHeader
 !macroend
 
+/* Installer side: initialise the uninstaller flag so the variable is always
+ * set (NSIS aborts on "variable never set" warnings when built with -WX). */
 !macro customInit
+  StrCpy $vdWipeUserData "0"
+!macroend
+
+/* Uninstaller side: same, before any page runs (also covers silent /S runs). */
+!macro customUnInit
+  StrCpy $vdWipeUserData "0"
 !macroend
