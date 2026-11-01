@@ -281,9 +281,60 @@ export interface InstanceCreateResult {
   error?: string
 }
 
+/* ---------------------------------------------------------------- integrity */
+
+export type IntegrityIssueKind = 'version' | 'client' | 'library' | 'asset' | 'assetIndex'
+
+/** One file that is missing or has the wrong size/hash. */
+export interface IntegrityIssue {
+  kind: IntegrityIssueKind
+  /** Short file name shown in the UI, e.g. `sodium-fabric.jar`. */
+  name: string
+  /** Absolute path on disk. */
+  path: string
+  expectedSize?: number
+  actualSize?: number
+  hash?: string
+}
+
+/** Result of the post-download integrity check that gates the «Играть» button. */
+export interface IntegrityReport {
+  ok: boolean
+  instanceId: string
+  versionId: string
+  checkedAt: string
+  code?: string
+  error?: string
+  missing: IntegrityIssue[]
+  /** Issues above the reporting cap are counted but not listed. */
+  truncatedIssues: number
+  counts: { libraries: number; assets: number; checked: number }
+  durationMs: number
+}
+
+/**
+ * Outcome of `install.run`. Failures are structured so the renderer can show
+ * «Ошибка сети. Не удалось скачать файл X» and offer a meaningful retry.
+ */
+export interface InstallRunResult {
+  ok: boolean
+  code?: string
+  message?: string
+  /** File that was being downloaded when the install died. */
+  file?: string
+  /** Stage key the failure happened in (`version` / `loader` / `libraries`). */
+  stage?: string
+  retryable?: boolean
+  /** Integrity report — present when the download finished but the files are bad. */
+  report?: IntegrityReport
+}
+
 export interface LaunchResult {
   ok: boolean
+  /** Machine-readable failure code (`network_error`, `integrity_failed`, …). */
   error?: string
+  /** File that failed to download, when the launch died on a download. */
+  file?: string
   crash?: CrashInfo
 }
 

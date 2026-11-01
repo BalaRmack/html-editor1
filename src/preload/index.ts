@@ -6,7 +6,9 @@ import type {
   CreateInstanceInput,
   CrashInfo,
   GameSnapshot,
+  InstallRunResult,
   InstalledMod,
+  IntegrityReport,
   Instance,
   InstancePatch,
   JavaRuntime,
@@ -34,9 +36,10 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
     throw new Error(`Некорректный ответ IPC-канала ${channel}`)
   }
   if (!payload.ok) {
-    const error = new Error(payload.error.message) as Error & { code?: string; detail?: string }
+    const error = new Error(payload.error.message) as Error & { code?: string; detail?: string; file?: string }
     error.code = payload.error.code
     error.detail = payload.error.detail
+    error.file = payload.error.file
     throw error
   }
   return payload.data
@@ -91,7 +94,9 @@ const api: LauncherApi = {
     loaders: (mcVersion: string, loader: LoaderType) => invoke<LoaderVersion[]>(IPC.versions.loaders, mcVersion, loader)
   },
   install: {
-    run: (instanceId: string) => invoke<{ ok: boolean; error?: string }>(IPC.install.run, instanceId),
+    run: (instanceId: string) => invoke<InstallRunResult>(IPC.install.run, instanceId),
+    verify: (instanceId: string, options?: { deep?: boolean }) =>
+      invoke<IntegrityReport>(IPC.install.verify, instanceId, options),
     cancel: () => void invoke<void>(IPC.install.cancel)
   },
   game: {

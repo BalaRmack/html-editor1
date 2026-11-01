@@ -41,7 +41,15 @@ function InstanceCard({
   const language = useAppStore((state) => state.settings.language)
   const gameInstanceId = useAppStore((state) => state.game.instanceId)
   const gameState = useAppStore((state) => state.game.state)
+  // Select the stored entry (stable reference); compute the fallback outside the
+  // selector so zustand's snapshot stays referentially equal between renders.
+  const integrityState = useAppStore((state) => state.integrity[instance.id])
+  const retryInstall = useAppStore((state) => state.retryInstall)
   const running = gameState === 'running' && gameInstanceId === instance.id
+  const integrityStatus = integrityState?.status ?? 'unknown'
+  const failed = integrityStatus === 'error'
+  const verifying = integrityStatus === 'checking'
+  const playable = integrityStatus === 'ok'
 
   return (
     <motion.div layout className="instance-banner glass glass-hover group relative overflow-hidden rounded-3xl" style={instanceGradient(instance.loader, instance.id)}>
@@ -80,9 +88,22 @@ function InstanceCard({
             <Button variant="danger" size="sm" onClick={onPlay}>
               {t('play.stop')}
             </Button>
-          ) : instance.installed ? (
+          ) : failed ? (
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<RefreshCw className="h-3.5 w-3.5" />}
+              onClick={() => void retryInstall(instance.id)}
+            >
+              {t('play.retry')}
+            </Button>
+          ) : instance.installed && playable ? (
             <Button variant="primary" size="sm" icon={<Play className="h-3.5 w-3.5 fill-current" />} onClick={onPlay}>
               {t('instances.play')}
+            </Button>
+          ) : instance.installed && verifying ? (
+            <Button size="sm" disabled icon={<RefreshCw className="h-3.5 w-3.5 animate-spin" />}>
+              {t('play.verifying')}
             </Button>
           ) : (
             <Button variant="primary" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={onInstall}>
@@ -93,7 +114,15 @@ function InstanceCard({
             {t('instances.configure')}
           </Button>
           <span className="ml-auto">
-            {instance.installed ? <Badge>{t('instances.installed')}</Badge> : <Badge tone="gold">{t('instances.installNeeded')}</Badge>}
+            {failed ? (
+              <Badge tone="danger">{t('play.errorBadge')}</Badge>
+            ) : instance.installed && playable ? (
+              <Badge>{t('instances.installed')}</Badge>
+            ) : verifying ? (
+              <Badge>{t('play.verifying')}</Badge>
+            ) : (
+              <Badge tone="gold">{t('instances.installNeeded')}</Badge>
+            )}
           </span>
         </div>
       </div>

@@ -457,7 +457,17 @@ export function CreateInstanceModal(): JSX.Element | null {
       setCreated(await api.instances.get(instance.id).catch(() => instance))
       setPhase('done')
     } else {
-      // the store already surfaced a toast; keep the instance and retry in place
+      // Surface the concrete reason right next to the button as well: a toast
+      // alone is easy to miss and the retry lives on this screen.
+      const state = useAppStore.getState().integrity[instance.id]
+      if (state?.status === 'error') {
+        setError(
+          state.code === 'network_error' && state.file
+            ? t('errors.network_error', { file: state.file })
+            : t(`errors.${state.code}` as TKey)
+        )
+      }
+      // keep the instance and retry in place
       setPending(instance)
       setPhase('idle')
       setCreated(null)
@@ -508,7 +518,12 @@ export function CreateInstanceModal(): JSX.Element | null {
       pushToast({ kind: 'success', titleKey: 'toast.packInstalled', vars: { name: instance.name } })
     } catch (err) {
       setPhase('idle')
-      setError(localizeError(t, (err as { code?: string }).code ?? (err as Error).message))
+      const code = (err as { code?: string }).code
+      setError(
+        code === 'network_error' && (err as { file?: string }).file
+          ? t('errors.network_error', { file: (err as { file?: string }).file as string })
+          : localizeError(t, code ?? (err as Error).message)
+      )
     } finally {
       submitInFlight.current = false
     }

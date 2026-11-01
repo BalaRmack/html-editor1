@@ -3,8 +3,10 @@ import { DEFAULT_SETTINGS } from '../../../shared/constants'
 import type {
   AppSettings,
   GameSnapshot,
+  InstallRunResult,
   InstalledMod,
   Instance,
+  IntegrityReport,
   JavaRuntime,
   LogLine,
   ModHit,
@@ -67,6 +69,54 @@ const stateListeners = new Set<(snapshot: GameSnapshot) => void>()
 const crashListeners = new Set<(crash: { instanceId: string; code: number | null; report: string; location: string }) => void>()
 
 let game: GameSnapshot = { state: 'idle', instanceId: null, startedAt: null, exitCode: null, crashReportLocation: null }
+
+/**
+ * Preview-only simulation knobs. The browser preview has no disk, so the mock
+ * keeps a per-instance "broken files" list that `install.verify` reports.
+ * Exposed on `window.__verdantMock` so screenshots / manual QA can force the
+ * error state without editing code.
+ */
+interface MockFailure {
+  code: string
+  file?: string
+  message?: string
+}
+const brokenFiles: Record<string, string[]> = {}
+let failNextInstall: MockFailure | null = null
+let failNextLaunch: MockFailure | null = null
+
+/** The mock has no push channel for instances; kept as a no-op for clarity. */
+const emitInstances = (): void => undefined
+
+const mockControl = {
+  /** Marks an instance as half-downloaded: verify() will fail for it. */
+  breakInstance(id: string, files = ['client-1.21.4.jar', 'lwjgl-3.3.3.jar', 'assets/objects/1f/1f8c…']): void {
+    brokenFiles[id] = files
+    const instance = instances.find((item) => item.id === id)
+    if (instance) instance.installed = true
+    emitInstances()
+  },
+  /** Forces the next `install.run` to fail with a network error. */
+  failInstall(code = 'network_error', file = 'client-1.21.4.jar', message = 'Не удалось скачать файл'): void {
+    failNextInstall = { code, file, message }
+  },
+  /** Forces the next launch's pre-flight download to fail (same code path as a real one). */
+  failLaunch(code = 'network_error', file = 'client-1.21.4.jar', message = 'Fail to download client jar'): void {
+    failNextLaunch = { code, file, message }
+  },
+  repair(id: string): void {
+    delete brokenFiles[id]
+  }
+}
+
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __verdantMock?: typeof mockControl }).__verdantMock = mockControl
+  // `?broken=a1` boots the preview straight into the corrupted-instance state,
+  // which is how the error UI is reviewed without editing code.
+  const broken = new URLSearchParams(window.location.search).get('broken')
+  if (broken) mockControl.breakInstance(broken)
+}
+
 
 const MODS: Omit<ModHit, 'source'>[] = [
   {
@@ -560,21 +610,105 @@ export function createMockApi(): LauncherApi {
       }
     },
     install: {
-      run: async (instanceId: string) => {
+      verify: async (instanceId: string): Promise<IntegrityReport> => {
+        await sleep(260)
+        const instance = instances.find((item) => item.id === instanceId)
+        const base: IntegrityReport = {
+          ok: true,
+          instanceId,
+          versionId: instance?.versionId ?? '',
+          checkedAt: new Date().toISOString(),
+          missing: [],
+          truncatedIssues: 0,
+          counts: { libraries: 62, assets: 2841, checked: 2904 },
+          durationMs: 180
+        }
+        if (!instance || !instance.installed) {
+          return { ...base, ok: false, code: 'not_installed', error: 'Файлы версии не найдены' }
+        }
+        const broken = brokenFiles[instanceId]
+        if (broken && broken.length > 0) {
+          return {
+            ...base,
+            ok: false,
+            code: 'integrity_failed',
+            error: `Не хватает файлов: ${broken.length}`,
+            missing: broken.map((name, index) => ({
+              kind: index === 0 ? 'client' : 'library',
+              name,
+              path: `C:\\Users\\Player\\AppData\\Roaming\\Verdant\\data\\shared\\libraries\\${name}`,
+              expectedSize: 2_100_000
+            })),
+            truncatedIssues: 0
+          }
+        }
+        return base
+      },
+      run: async (instanceId: string): Promise<InstallRunResult> => {
         const instance = instances.find((item) => item.id === instanceId)
         const fabric = instance?.loader !== 'vanilla'
+        const forced = failNextInstall
         await tick(
           `Установка «${instance?.name ?? ''}»`,
           [
             { key: 'manifest', label: 'Чтение манифеста версии', total: 6, unit: 'files', ms: 420 },
             { key: 'version', label: 'Загрузка файлов игры', total: 22 * MB, ms: 1400 },
             ...(fabric ? [{ key: 'loader', label: 'Установка загрузчика', total: 9 * MB, ms: 900 }] : []),
-            { key: 'libraries', label: 'Библиотеки, ассеты и natives', total: 64 * MB, ms: 1900 }
+            { key: 'libraries', label: 'Библиотеки, ассеты и natives', total: 64 * MB, ms: forced ? 700 : 1900, steps: forced ? 6 : 14 }
           ],
           instanceId
         )
-        if (instance) instance.installed = true
-        return { ok: true }
+        if (forced) {
+          failNextInstall = null
+          if (instance) {
+            instance.installed = true
+            brokenFiles[instanceId] = [forced.file ?? 'client-1.21.4.jar']
+          }
+          emitInstances()
+          return {
+            ok: false,
+            code: forced.code,
+            message: forced.message,
+            file: forced.file,
+            stage: 'libraries',
+            retryable: true,
+            report: await (async () => {
+              const broken = brokenFiles[instanceId] ?? []
+              return {
+                ok: false,
+                instanceId,
+                versionId: instance?.versionId ?? '',
+                checkedAt: new Date().toISOString(),
+                code: 'integrity_failed',
+                error: `Не хватает файлов: ${broken.length}`,
+                missing: broken.map((name) => ({
+                  kind: 'library' as const,
+                  name,
+                  path: `C:\\shared\\libraries\\${name}`,
+                  expectedSize: 2_100_000
+                })),
+                truncatedIssues: 0,
+                counts: { libraries: 61, assets: 2841, checked: 2902 },
+                durationMs: 190
+              }
+            })()
+          }
+        }
+        if (instance) {
+          instance.installed = true
+          delete brokenFiles[instanceId]
+        }
+        emitInstances()
+        return { ok: true, report: await (async () => ({
+          ok: true,
+          instanceId,
+          versionId: instance?.versionId ?? '',
+          checkedAt: new Date().toISOString(),
+          missing: [],
+          truncatedIssues: 0,
+          counts: { libraries: 62, assets: 2841, checked: 2904 },
+          durationMs: 180
+        }))() }
       },
       cancel: () => undefined
     },
@@ -584,6 +718,16 @@ export function createMockApi(): LauncherApi {
         await sleep(500)
         setGame({ state: 'downloading' })
         await sleep(700)
+        if (failNextLaunch) {
+          const failure = failNextLaunch
+          failNextLaunch = null
+          setGame({ state: 'idle', instanceId: null, startedAt: null })
+          brokenFiles[instanceId] = [failure.file ?? 'client-1.21.4.jar']
+          const error = new Error(failure.message ?? 'network_error') as Error & { code?: string; file?: string }
+          error.code = failure.code
+          error.file = failure.file
+          throw error
+        }
         setGame({ state: 'starting' })
         await sleep(600)
         setGame({ state: 'running' })

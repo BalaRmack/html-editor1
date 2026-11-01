@@ -4,8 +4,10 @@ import type {
   AppSettings,
   CrashInfo,
   GameSnapshot,
+  InstallRunResult,
   Instance,
   InstancePatch,
+  IntegrityReport,
   LogLine,
   ModpackInstallInput,
   OfflineProfile,
@@ -26,7 +28,22 @@ export interface ToastItem {
   vars?: Record<string, string | number>
   errorCode?: string
   description?: string
+  /** Optional retry affordance rendered inside the toast. */
+  action?: { labelKey: string; icon?: 'retry' | 'open'; run: () => void }
+  /** Error toasts with an action stay until the user closes them. */
+  sticky?: boolean
 }
+
+/**
+ * Per-instance download state. `missing` means "nothing on disk yet, offer
+ * install"; `error` means "files are absent/corrupted, «Играть» must be locked".
+ */
+export type IntegrityState =
+  | { status: 'unknown' }
+  | { status: 'checking' }
+  | { status: 'ok'; report: IntegrityReport }
+  | { status: 'missing'; report?: IntegrityReport }
+  | { status: 'error'; code: string; message?: string; file?: string; report?: IntegrityReport }
 
 interface AppStore {
   ready: boolean
@@ -42,6 +59,8 @@ interface AppStore {
   task: TaskProgress | null
   game: GameSnapshot
   crash: CrashInfo | null
+
+  integrity: Record<string, IntegrityState>
 
   profileModalOpen: boolean
   createOpen: boolean
@@ -66,6 +85,8 @@ interface AppStore {
   toastError: (error: unknown, titleKey?: string) => void
   createInstance: (input: Parameters<typeof api.instances.create>[0]) => Promise<Instance>
   installInstance: (id: string) => Promise<boolean>
+  retryInstall: (id: string) => Promise<boolean>
+  checkIntegrity: (id: string, options?: { silent?: boolean }) => Promise<IntegrityState>
   installModpack: (input: ModpackInstallInput) => Promise<Instance>
   launch: (id?: string) => Promise<void>
   stopGame: () => void
@@ -95,6 +116,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   task: null,
   game: { state: 'idle', instanceId: null, startedAt: null, exitCode: null, crashReportLocation: null },
   crash: null,
+
+  integrity: {},
 
   profileModalOpen: false,
   createOpen: false,
@@ -153,6 +176,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     })
     api.game.onCrash((crash) => set({ crash }))
+
+    // Prove the files are really on disk before the UI offers «Играть».
+    // Selected instance first, the rest in the background so boot stays instant.
+    const state = get()
+    const ordered = [
+      ...(state.selectedId ? [state.selectedId] : []),
+      ...state.instances.map((item) => item.id).filter((id) => id !== state.selectedId)
+    ]
+    void (async () => {
+      for (const id of ordered) {
+        await get().checkIntegrity(id, { silent: true })
+      }
+    })()
   },
 
   setScreen: (screen) => set({ screen }),
@@ -162,7 +198,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const list = await api.instances.list().catch(() => [])
     const current = get().selectedId
     const stillExists = current && list.some((instance) => instance.id === current)
-    set({ instances: list, selectedId: stillExists ? current : list[0]?.id ?? null })
+    set((state) => {
+      const known = new Set(list.map((instance) => instance.id))
+      const integrity = Object.fromEntries(Object.entries(state.integrity).filter(([id]) => known.has(id)))
+      return { instances: list, selectedId: stillExists ? current : list[0]?.id ?? null, integrity }
+    })
     return list
   },
 
@@ -211,6 +251,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   pushToast: (toast) => {
     const id = ++toastSeq
     set((state) => ({ toasts: [...state.toasts.slice(-3), { ...toast, id }] }))
+    // Errors that carry a retry action wait for the user — disappearing on their
+    // own is exactly how a failed download used to go unnoticed.
+    if (toast.sticky) return
     window.setTimeout(() => {
       if (get().toasts.some((item) => item.id === id)) get().dismissToast(id)
     }, toast.kind === 'error' ? 8000 : 4200)
@@ -236,16 +279,93 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return instance
   },
 
+  async checkIntegrity(id, options = {}) {
+    const instance = get().instances.find((item) => item.id === id)
+    if (!instance) return { status: 'unknown' as const }
+    if (!options.silent) set((state) => ({ integrity: { ...state.integrity, [id]: { status: 'checking' } } }))
+
+    let report: IntegrityReport
+    try {
+      report = await api.install.verify(id)
+    } catch (error) {
+      const state: IntegrityState = {
+        status: 'error',
+        code: extractCode(error),
+        message: (error as Error).message,
+        file: (error as { file?: string }).file
+      }
+      set((prev) => ({ integrity: { ...prev.integrity, [id]: state } }))
+      return state
+    }
+
+    const state: IntegrityState = report.ok
+      ? { status: 'ok', report }
+      : report.code === 'not_installed'
+        ? { status: 'missing', report }
+        : {
+            status: 'error',
+            code: report.code ?? 'integrity_failed',
+            message: report.error,
+            file: report.missing[0]?.name,
+            report
+          }
+    set((prev) => ({ integrity: { ...prev.integrity, [id]: state } }))
+    return state
+  },
+
+  async retryInstall(id) {
+    return get().installInstance(id)
+  },
+
   async installInstance(id) {
-    const result = await api.install.run(id).catch((error) => ({ ok: false, error: extractCode(error) }))
-    await get().refreshInstances()
+    const instance = get().instances.find((item) => item.id === id)
+    if (instance) {
+      set((prev) => ({ integrity: { ...prev.integrity, [id]: { status: 'checking' } } }))
+    }
+
+    const result = await api.install
+      .run(id)
+      .catch((error) => ({ ok: false, code: extractCode(error), message: (error as Error).message }) as InstallRunResult)
+    const list = await get().refreshInstances()
+
     if (result.ok) {
+      const report = result.report ?? (await api.install.verify(id).catch(() => null))
+      const state: IntegrityState = report
+        ? report.ok
+          ? { status: 'ok', report }
+          : { status: 'error', code: report.code ?? 'integrity_failed', message: report.error, report }
+        : { status: 'ok', report: undefined as never }
+      set((prev) => ({ integrity: { ...prev.integrity, [id]: state } }))
       get().pushToast({ kind: 'success', titleKey: 'toast.installDone' })
       return true
     }
-    if (result.error && result.error !== 'cancelled') {
-      get().pushToast({ kind: 'error', titleKey: 'toast.error', errorCode: result.error })
+
+    if (result.code === 'cancelled') {
+      set((prev) => ({ integrity: { ...prev.integrity, [id]: { status: 'unknown' } } }))
+      get().pushToast({ kind: 'info', titleKey: 'toast.installCancelled' })
+      return false
     }
+
+    const code = result.code ?? 'install_failed'
+    const state: IntegrityState = {
+      status: 'error',
+      code,
+      message: result.message,
+      file: result.file,
+      report: result.report
+    }
+    set((prev) => ({ integrity: { ...prev.integrity, [id]: state } }))
+
+    void list
+    get().pushToast({
+      kind: 'error',
+      titleKey: code === 'network_error' ? 'toast.downloadFailed' : 'toast.installFailed',
+      errorCode: code,
+      vars: result.file ? { file: result.file } : undefined,
+      description: result.message,
+      sticky: true,
+      action: { labelKey: 'common.retry', icon: 'retry', run: () => void get().retryInstall(id) }
+    })
     return false
   },
 
@@ -267,7 +387,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const settings = get().settings
       if (settings.showConsoleOnLaunch) set({ screen: 'console' })
     } catch (error) {
-      get().toastError(error, 'toast.launchError')
+      const code = extractCode(error)
+      const file = (error as { file?: string }).file
+      if (code === 'network_error' || code === 'integrity_failed' || code === 'not_installed') {
+        set((prev) => ({
+          integrity: {
+            ...prev.integrity,
+            [target]: { status: 'error', code, message: (error as Error).message, file }
+          }
+        }))
+        get().pushToast({
+          kind: 'error',
+          titleKey: 'toast.downloadFailed',
+          errorCode: code,
+          vars: file ? { file } : undefined,
+          sticky: true,
+          action: { labelKey: 'common.retry', icon: 'retry', run: () => void get().retryInstall(target) }
+        })
+      } else {
+        get().toastError(error, 'toast.launchError')
+      }
     }
   },
 

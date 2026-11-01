@@ -13,6 +13,8 @@ import {
 import { installDependencies } from '@xmcl/installer'
 import { APP_NAME, APP_VERSION } from '../../shared/constants'
 import type { AppSettings, CrashInfo, GameSnapshot, Instance, LaunchResult, OfflineProfile } from '../../shared/types'
+import { toFailure } from './errors'
+import { checkIntegrity } from './integrity'
 import { javaService } from './java'
 import { logger } from './logger'
 import { offlineToken } from './offline'
@@ -178,7 +180,28 @@ export class LaunchService {
 
       this.setState({ state: 'downloading' })
       logger.info('Проверка целостности файлов игры…')
-      await installDependencies(resolved, {})
+
+      // Repair before launching: `installDependencies` re-downloads only what is
+      // missing, but if it dies on the network we must never fall through to
+      // `launchMinecraft` with a half-populated directory.
+      try {
+        await installDependencies(resolved, {})
+      } catch (error) {
+        const failure = toFailure(error, 'libraries')
+        logger.error(`Докачка файлов не удалась: ${failure.message}`)
+        this.setState({ state: 'idle' })
+        return { ok: false, error: failure.code, file: failure.file }
+      }
+
+      const report = await checkIntegrity(
+        { id: instance.id, versionId: instance.versionId, mcVersion: instance.mcVersion },
+        sharedDir
+      )
+      if (!report.ok) {
+        logger.error(`Целостность не подтверждена: не хватает ${report.missing.length + report.truncatedIssues} файлов`)
+        this.setState({ state: 'idle' })
+        return { ok: false, error: 'integrity_failed', file: report.missing[0]?.name }
+      }
       logger.info('Файлы в порядке')
 
       await mkdir(instanceDir, { recursive: true })
@@ -254,11 +277,11 @@ export class LaunchService {
       context.onAfterLaunch?.()
       return { ok: true }
     } catch (error) {
-      const message = (error as Error).message
-      logger.error(`Ошибка запуска: ${message}`)
+      const failure = toFailure(error)
+      logger.error(`Ошибка запуска: [${failure.code}] ${failure.message}`)
       this.child = null
       this.setState({ state: 'idle' })
-      return { ok: false, error: message }
+      return { ok: false, error: failure.code, file: failure.file }
     }
   }
 

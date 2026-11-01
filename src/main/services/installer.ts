@@ -14,7 +14,9 @@ import {
 } from '@xmcl/installer'
 import { createFork, type Task } from '@xmcl/task'
 import { FORGE_MAVEN, NEOFORGE_MAVEN } from '../../shared/constants'
-import type { Instance, LoaderType } from '../../shared/types'
+import type { Instance, IntegrityReport, LoaderType } from '../../shared/types'
+import { AppError, toFailure, withStage } from './errors'
+import { checkIntegrity } from './integrity'
 import { javaService } from './java'
 import { logger } from './logger'
 import { tasks, type TaskHandle } from './tasks'
@@ -96,6 +98,11 @@ export class InstallerService {
 
   private checkCancelled(): void {
     if (this.cancelled) throw new CancelledError()
+  }
+
+  /** Verifies every file of an instance without downloading anything. */
+  async verify(instance: Instance, sharedDir: string, options: { deep?: boolean } = {}): Promise<IntegrityReport> {
+    return checkIntegrity(instance, sharedDir, options)
   }
 
   /** Reads the java major declared by the vanilla version json, if present. */
@@ -211,17 +218,19 @@ export class InstallerService {
 
     try {
       handle.stage('Получение манифеста Mojang', 0, 0, 'bytes', 'manifest')
-      const meta = await this.findVersionMeta(instance.mcVersion)
+      const meta = await withStage('manifest', () => this.findVersionMeta(instance.mcVersion))
       this.checkCancelled()
 
       handle.stage(`Версия Minecraft ${instance.mcVersion}`, 0, 0, 'bytes', 'version')
-      await runXmclTask(
-        installVersionTask(meta, sharedDir),
-        handle,
-        { label: `Версия Minecraft ${instance.mcVersion}`, key: 'version' },
-        (task) => {
-          this.current = task as Task<unknown>
-        }
+      await withStage('version', () =>
+        runXmclTask(
+          installVersionTask(meta, sharedDir),
+          handle,
+          { label: `Версия Minecraft ${instance.mcVersion}`, key: 'version' },
+          (task) => {
+            this.current = task as Task<unknown>
+          }
+        )
       )
       this.checkCancelled()
 
@@ -237,26 +246,24 @@ export class InstallerService {
 
       if (needsLoader) {
         handle.stage(`Установка ${instance.loader}`, 0, 0, 'steps', 'loader')
-        const result = await this.installLoader(
-          instance.mcVersion,
-          instance.loader,
-          instance.loaderVersion,
-          sharedDir,
-          javaPath
+        const result = await withStage('loader', () =>
+          this.installLoader(instance.mcVersion, instance.loader, instance.loaderVersion, sharedDir, javaPath)
         )
         versionId = result.versionId
         loaderVersion = result.loaderVersion
         this.checkCancelled()
       }
 
-      const resolved = await Version.parse(sharedDir, versionId)
-      await runXmclTask(
-        installDependenciesTask(resolved),
-        handle,
-        { label: 'Библиотеки и ассеты', key: 'libraries' },
-        (task) => {
-          this.current = task as Task<unknown>
-        }
+      const resolved = await withStage('libraries', () => Version.parse(sharedDir, versionId))
+      await withStage('libraries', () =>
+        runXmclTask(
+          installDependenciesTask(resolved),
+          handle,
+          { label: 'Библиотеки и ассеты', key: 'libraries' },
+          (task) => {
+            this.current = task as Task<unknown>
+          }
+        )
       )
       this.current = null
 
@@ -265,8 +272,10 @@ export class InstallerService {
       return { versionId, loaderVersion, mcVersion: instance.mcVersion, loader: instance.loader }
     } catch (error) {
       this.current = null
-      handle.fail((error as Error).message)
-      throw error
+      const failure = toFailure(error)
+      handle.fail(failure.message)
+      logger.error(`Установка «${instance.name}» прервана: [${failure.code}] ${failure.message}`)
+      throw error instanceof AppError ? error : new AppError(failure)
     }
   }
 
@@ -274,20 +283,24 @@ export class InstallerService {
   async repair(instance: Instance, sharedDir: string): Promise<void> {
     const handle = tasks.create(`Проверка «${instance.name}»`, { instanceId: instance.id, unit: 'bytes' })
     try {
-      const resolved = await Version.parse(sharedDir, instance.versionId)
-      await runXmclTask(
-        installDependenciesTask(resolved),
-        handle,
-        { label: 'Проверка файлов', key: 'libraries' },
-        (task) => {
-          this.current = task as Task<unknown>
-        }
+      const resolved = await withStage('libraries', () => Version.parse(sharedDir, instance.versionId))
+      await withStage('libraries', () =>
+        runXmclTask(
+          installDependenciesTask(resolved),
+          handle,
+          { label: 'Проверка файлов', key: 'libraries' },
+          (task) => {
+            this.current = task as Task<unknown>
+          }
+        )
       )
       this.current = null
       handle.done('Файлы в порядке')
     } catch (error) {
-      handle.fail((error as Error).message)
-      throw error
+      this.current = null
+      const failure = toFailure(error)
+      handle.fail(failure.message)
+      throw error instanceof AppError ? error : new AppError(failure)
     }
   }
 

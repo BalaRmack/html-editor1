@@ -8,6 +8,7 @@ import type {
   AppConfig,
   AppSettings,
   CreateInstanceInput,
+  InstallRunResult,
   InstancePatch,
   LoaderType,
   ModInstallInput,
@@ -16,6 +17,7 @@ import type {
   SystemInfo
 } from '../../shared/types'
 import { configStore } from '../services/config-store'
+import { AppError, toFailure } from '../services/errors'
 import { instances } from '../services/instances'
 import { installer } from '../services/installer'
 import { javaService } from '../services/java'
@@ -44,14 +46,15 @@ function handle(channel: string, fn: (event: Electron.IpcMainInvokeEvent, ...arg
     try {
       return { ok: true, data: await fn(event, ...(args as never[])) }
     } catch (error) {
-      const err = error as Error & { code?: string }
+      const err = error as Error & { code?: string; file?: string }
       logger.error(`[${channel}] ${err.message}`)
       return {
         ok: false,
         error: {
           code: err.code ?? 'unknown',
           message: err.message || 'Неизвестная ошибка',
-          detail: err.stack?.split('\n').slice(0, 3).join('\n')
+          detail: err.stack?.split('\n').slice(0, 3).join('\n'),
+          file: err.file
         }
       }
     }
@@ -253,19 +256,56 @@ export function registerIpc(): void {
   handle(IPC.versions.loaders, (_event, mcVersion: string, loader: LoaderType) => versions.listLoaders(mcVersion, loader))
 
   // ---------- install ----------
-  handle(IPC.install.run, async (_event, instanceId: string) => {
+  /**
+   * Downloads an instance, then *verifies* it. The result is structured: the UI
+   * needs to know whether to offer «Повторить» (network), «Ошибка загрузки»
+   * (integrity) or nothing at all (cancelled / missing Java).
+   */
+  handle(IPC.install.run, async (_event, instanceId: string): Promise<InstallRunResult> => {
     const instance = await instances.get(instanceId)
     const settings = configStore.get().settings
+    const sharedDir = paths.get().sharedDir
     try {
-      const outcome = await installer.installInstance(instance, paths.get().sharedDir, settings.javaPath)
+      const outcome = await installer.installInstance(instance, sharedDir, settings.javaPath)
       await instances.setVersionInfo(instance.id, outcome.versionId, outcome.loaderVersion, outcome.mcVersion)
-      return { ok: true }
+
+      // Never trust the downloader: prove the files are on disk before the UI
+      // is allowed to enable «Играть».
+      const updated = await instances.get(instanceId)
+      const report = await installer.verify(updated, sharedDir)
+      if (!report.ok) {
+        logger.error(
+          `Установка «${instance.name}»: проверка целостности не прошла (${report.missing.length + report.truncatedIssues} файлов)`
+        )
+        return {
+          ok: false,
+          code: report.code ?? 'integrity_failed',
+          message: report.error,
+          file: report.missing[0]?.name,
+          stage: 'libraries',
+          retryable: true,
+          report
+        }
+      }
+      return { ok: true, report }
     } catch (error) {
-      const err = error as Error & { code?: string }
-      if (err.code === 'cancelled') return { ok: false, error: 'cancelled' }
-      logger.error(`Установка не удалась: ${err.message}`)
-      return { ok: false, error: err.message }
+      const failure = toFailure(error)
+      if (failure.code === 'cancelled') return { ok: false, code: 'cancelled', message: failure.message, retryable: false }
+      logger.error(`Установка не удалась: [${failure.code}] ${failure.message}`)
+      return {
+        ok: false,
+        code: failure.code,
+        message: failure.message,
+        file: failure.file,
+        stage: failure.stage,
+        retryable: failure.retryable
+      }
     }
+  })
+
+  handle(IPC.install.verify, async (_event, instanceId: string, options?: { deep?: boolean }) => {
+    const instance = await instances.get(instanceId)
+    return installer.verify(instance, paths.get().sharedDir, options ?? {})
   })
 
   handle(IPC.install.cancel, () => {
@@ -282,8 +322,13 @@ export function registerIpc(): void {
     let instance = await instances.get(instanceId)
 
     if (!instance.installed) {
-      const outcome = await installer.installInstance(instance, paths.get().sharedDir, settings.javaPath)
-      await instances.setVersionInfo(instance.id, outcome.versionId, outcome.loaderVersion, outcome.mcVersion)
+      try {
+        const outcome = await installer.installInstance(instance, paths.get().sharedDir, settings.javaPath)
+        await instances.setVersionInfo(instance.id, outcome.versionId, outcome.loaderVersion, outcome.mcVersion)
+      } catch (error) {
+        const failure = toFailure(error)
+        throw new AppError(failure)
+      }
       instance = await instances.get(instanceId)
     }
 
@@ -297,7 +342,13 @@ export function registerIpc(): void {
     })
 
     if (!result.ok) {
-      throw coded(result.error ?? 'launch_failed', result.error === 'not_installed' ? 'Сборка не установлена' : result.error)
+      const failure = new AppError({
+        code: result.error ?? 'launch_failed',
+        message: result.error === 'not_installed' ? 'Сборка не установлена' : result.error ?? 'Не удалось запустить игру',
+        file: result.file,
+        retryable: true
+      })
+      throw failure
     }
 
     configStore.setSelectedInstance(instanceId)

@@ -39,6 +39,15 @@ export const ru = {
   'unit.mod.many': 'модов',
   'play.version': 'Версия',
   'play.ready': 'Готова к запуску',
+  'play.errorBadge': 'Ошибка загрузки',
+  'play.errorTitle': 'Файлы игры не скачаны',
+  'play.errorHint': 'Загрузка прервалась. Проверьте интернет и повторите — прогресс сохранится.',
+  'play.errorPlay': 'Ошибка загрузки',
+  'play.verify': 'Проверить снова',
+  'play.verifying': 'Проверка файлов…',
+  'play.verified': 'Файлы проверены',
+  'play.missingFiles': 'Проблемных файлов: {count}',
+  'play.retry': 'Повторить загрузку',
   'play.notInstalled': 'Нужна установка',
   'play.profileCard': 'Профиль игрока',
   'play.offline': 'Offline-аккаунт',
@@ -331,6 +340,10 @@ export const ru = {
   'toast.instanceDeleted': 'Сборка удалена',
   'toast.cloned': 'Сборка клонирована',
   'toast.instanceUpdated': 'Сборка обновлена',
+  'toast.downloadFailed': 'Загрузка не удалась',
+  'toast.installFailed': 'Установка не удалась',
+  'toast.installCancelled': 'Установка отменена',
+  'toast.integrityOk': 'Файлы игры в порядке',
   'toast.installDone': 'Установка завершена',
   'toast.modInstalled': 'Мод установлен',
   'toast.modsInstalled': 'Установлено файлов: {count}',
@@ -355,7 +368,14 @@ export const ru = {
   'errors.not_installed': 'Сборка не установлена',
   'errors.game_running': 'Игра уже запущена',
   'errors.version_not_found': 'Версия не найдена',
-  'errors.network_error': 'Нет связи с сервером. Проверьте интернет.',
+  'errors.network_error': 'Ошибка сети. Не удалось скачать файл «{file}»',
+  'errors.network_error.generic': 'Ошибка сети. Не удалось скачать файлы игры',
+  'errors.integrity_failed': 'Файлы повреждены или не докачаны — запуск заблокирован',
+  'errors.install_failed': 'Установка прервалась на этапе загрузки',
+  'errors.loader_error': 'Не удалось установить загрузчик',
+  'errors.manifest_error': 'Не удалось получить список версий Mojang',
+  'errors.disk_error': 'Не хватает места на диске',
+  'errors.version_corrupted': 'Файл версии повреждён',
   'errors.icon_must_be_png': 'Иконка должна быть PNG',
   'errors.skin_invalid_format': 'Скин должен быть PNG',
   'errors.skin_invalid_size': 'Нужен PNG 64×64 или 64×32',
@@ -404,6 +424,15 @@ export const en: Record<TKey, string> = {
   'unit.mod.many': 'mods',
   'play.version': 'Version',
   'play.ready': 'Ready to play',
+  'play.errorBadge': 'Download error',
+  'play.errorTitle': 'Game files are missing',
+  'play.errorHint': 'The download was interrupted. Check your connection and retry — progress is kept.',
+  'play.errorPlay': 'Download error',
+  'play.verify': 'Check again',
+  'play.verifying': 'Verifying files…',
+  'play.verified': 'Files verified',
+  'play.missingFiles': 'Problem files: {count}',
+  'play.retry': 'Retry download',
   'play.notInstalled': 'Needs install',
   'play.profileCard': 'Player profile',
   'play.offline': 'Offline account',
@@ -696,6 +725,10 @@ export const en: Record<TKey, string> = {
   'toast.instanceDeleted': 'Instance deleted',
   'toast.cloned': 'Instance cloned',
   'toast.instanceUpdated': 'Instance updated',
+  'toast.downloadFailed': 'Download failed',
+  'toast.installFailed': 'Install failed',
+  'toast.installCancelled': 'Install cancelled',
+  'toast.integrityOk': 'Game files verified',
   'toast.installDone': 'Install complete',
   'toast.modInstalled': 'Mod installed',
   'toast.modsInstalled': 'Files installed: {count}',
@@ -720,7 +753,14 @@ export const en: Record<TKey, string> = {
   'errors.not_installed': 'Instance is not installed',
   'errors.game_running': 'The game is already running',
   'errors.version_not_found': 'Version not found',
-  'errors.network_error': 'Network error. Check your connection.',
+  'errors.network_error': 'Network error. Could not download “{file}”',
+  'errors.network_error.generic': 'Network error. Could not download the game files',
+  'errors.integrity_failed': 'Files are missing or corrupted — launching is locked',
+  'errors.install_failed': 'The install stopped while downloading',
+  'errors.loader_error': 'Could not install the mod loader',
+  'errors.manifest_error': 'Could not fetch the Mojang version list',
+  'errors.disk_error': 'Not enough disk space',
+  'errors.version_corrupted': 'The version file is corrupted',
   'errors.icon_must_be_png': 'Icon must be a PNG',
   'errors.skin_invalid_format': 'Skin must be a PNG',
   'errors.skin_invalid_size': 'PNG 64×64 or 64×32 required',
@@ -766,9 +806,19 @@ export function pluralCount(
 }
 
 /** Maps a backend error code (or message) to a localised, human sentence. */
-export function localizeError(t: (key: TKey, vars?: Record<string, string | number>) => string, code?: string): string {
+export function localizeError(
+  t: (key: TKey, vars?: Record<string, string | number>) => string,
+  code?: string,
+  vars?: Record<string, string | number>
+): string {
   if (!code) return t('errors.unknown')
   const key = `errors.${code}` as TKey
-  if (key in ru) return t(key)
-  return code
+  if (key in ru) return t(key, vars)
+  // Fall back to a neutral sentence — never show a raw stack/URL as the message.
+  return t('errors.unknown')
+}
+
+/** True when the code has a dedicated localised sentence. */
+export function hasErrorText(code?: string): boolean {
+  return Boolean(code) && (`errors.${code}` as TKey) in ru
 }

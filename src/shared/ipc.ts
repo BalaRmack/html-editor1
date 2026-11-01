@@ -4,8 +4,10 @@ import type {
   CreateInstanceInput,
   GameSnapshot,
   InstalledMod,
+  InstallRunResult,
   Instance,
   InstancePatch,
+  IntegrityReport,
   JavaRuntime,
   LaunchResult,
   LoaderType,
@@ -71,6 +73,7 @@ export const IPC = {
   },
   install: {
     run: 'install:run',
+    verify: 'install:verify',
     cancel: 'install:cancel'
   },
   game: {
@@ -115,6 +118,8 @@ export interface IpcError {
   code: string
   message: string
   detail?: string
+  /** File that failed to download, used by the retry UI. */
+  file?: string
 }
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: IpcError }
@@ -169,7 +174,10 @@ export interface LauncherApi {
     loaders(mcVersion: string, loader: LoaderType): Promise<LoaderVersion[]>
   }
   install: {
-    run(instanceId: string): Promise<{ ok: boolean; error?: string }>
+    /** Downloads everything the instance needs and verifies it afterwards. */
+    run(instanceId: string): Promise<InstallRunResult>
+    /** Read-only integrity check; never downloads anything. */
+    verify(instanceId: string, options?: { deep?: boolean }): Promise<IntegrityReport>
     cancel(): void
   }
   game: {

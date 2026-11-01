@@ -1,14 +1,31 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, Cpu, HardDrive, Layers, Package, Play, Plus, Square, Terminal, Timer, UserRound, CheckCircle2, Download } from 'lucide-react'
-import { useState } from 'react'
+import {
+  AlertTriangle,
+  ChevronDown,
+  Cpu,
+  Download,
+  HardDrive,
+  Layers,
+  Package,
+  Play,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Square,
+  Terminal,
+  Timer,
+  UserRound,
+  CheckCircle2
+} from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { formatDuration } from '../../../shared/constants'
 import { LOADER_LABELS, type Instance } from '../../../shared/types'
-import { pluralCount, useT } from '../i18n'
+import { pluralCount, useT, type TKey } from '../i18n'
 import { cn, formatGb, instanceGradient, relativeTime } from '../lib/utils'
 import { useAppStore } from '../store/app'
 import { ScreenHeader } from '../components/layout'
 import { SkinHead } from '../components/SkinPreview'
-import { Badge, Button, EmptyState, Panel, ProgressBar, SectionTitle } from '../components/ui'
+import { Badge, Button, EmptyState, Panel, ProgressBar, SectionTitle, Spinner } from '../components/ui'
 
 function InstanceMenuItem({ instance, active, onClick }: { instance: Instance; active: boolean; onClick: () => void }): JSX.Element {
   return (
@@ -53,6 +70,9 @@ export function PlayScreen(): JSX.Element {
   const launch = useAppStore((state) => state.launch)
   const stopGame = useAppStore((state) => state.stopGame)
   const installInstance = useAppStore((state) => state.installInstance)
+  const retryInstall = useAppStore((state) => state.retryInstall)
+  const checkIntegrity = useAppStore((state) => state.checkIntegrity)
+  const integrity = useAppStore((state) => state.integrity)
   const openCreate = useAppStore((state) => state.openCreate)
   const openProfileModal = useAppStore((state) => state.openProfileModal)
   const setScreen = useAppStore((state) => state.setScreen)
@@ -63,6 +83,24 @@ export function PlayScreen(): JSX.Element {
   const busy = ['checking', 'downloading', 'starting'].includes(game.state)
   const running = game.state === 'running'
   const activeTask = task && task.status === 'running' ? task : null
+
+  // Download state of the selected instance. «Играть» unlocks only on `ok`,
+  // which is produced by a real integrity check, never by the downloader.
+  const state = instance ? integrity[instance.id] ?? { status: 'unknown' as const } : { status: 'unknown' as const }
+  const verifying = state.status === 'checking' || state.status === 'unknown'
+  const failed = state.status === 'error'
+  const playable = state.status === 'ok' && instance?.installed === true
+  const errorCode = state.status === 'error' ? state.code : null
+  const errorFile = state.status === 'error' ? state.file : undefined
+  const errorReport = state.status === 'error' ? state.report : undefined
+  const problemCount = errorReport ? errorReport.missing.length + errorReport.truncatedIssues : 0
+  const downloading = activeTask !== null && instance !== null && activeTask.instanceId === instance.id
+
+  // Verify as soon as the screen shows an instance we know nothing about.
+  useEffect(() => {
+    if (!instance) return
+    if ((integrity[instance.id] ?? { status: 'unknown' }).status === 'unknown') void checkIntegrity(instance.id)
+  }, [instance, integrity, checkIntegrity])
   const totalMem = systemInfo?.totalMemMB ?? 16384
   const memoryRatio = instance ? instance.memory.max / totalMem : 0.25
   const memoryAccent = memoryRatio > 0.7 ? '#f87171' : memoryRatio > 0.5 ? '#f5c249' : '#2fe28c'
@@ -106,8 +144,14 @@ export function PlayScreen(): JSX.Element {
                       <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
                         <Badge tone="emerald">{LOADER_LABELS[instance.loader]}</Badge>
                         <Badge>{instance.mcVersion}</Badge>
-                        {instance.installed ? (
-                          <Badge>{t('play.ready')}</Badge>
+                        {failed ? (
+                          <Badge tone="danger">{t('play.errorBadge')}</Badge>
+                        ) : verifying ? (
+                          <Badge tone="default">
+                            <Spinner /> {t('play.verifying')}
+                          </Badge>
+                        ) : playable ? (
+                          <Badge tone="emerald">{t('play.verified')}</Badge>
                         ) : (
                           <Badge tone="gold">{t('play.notInstalled')}</Badge>
                         )}
@@ -168,18 +212,28 @@ export function PlayScreen(): JSX.Element {
                   </div>
                 </div>
 
-                <div className="mt-6 flex flex-col items-center gap-5">
+                <div className="mt-6 flex flex-col items-center gap-4">
                   <div className="flex items-center gap-4">
                     <button
-                      className={cn('play-button', running && 'play-button--running')}
-                      disabled={busy || activeTask !== null}
+                      className={cn(
+                        'play-button',
+                        running && 'play-button--running',
+                        failed && 'play-button--error'
+                      )}
+                      disabled={busy || downloading || verifying || failed}
+                      title={failed ? t('play.errorHint') : undefined}
                       onClick={() => {
-                        if (running) return
-                        if (!instance.installed) void installInstance(instance.id)
+                        if (running || failed || verifying) return
+                        if (!playable) void installInstance(instance.id)
                         else void launch(instance.id)
                       }}
                     >
-                      {busy ? (
+                      {downloading ? (
+                        <>
+                          <Download className="h-5 w-5 animate-bounce" />
+                          {t('top.preparing')}
+                        </>
+                      ) : busy ? (
                         <>
                           <Download className="h-5 w-5 animate-bounce" />
                           {t('top.preparing')}
@@ -189,7 +243,17 @@ export function PlayScreen(): JSX.Element {
                           <span className="pulse-dot" />
                           {t('play.running')}
                         </>
-                      ) : instance.installed ? (
+                      ) : failed ? (
+                        <>
+                          <AlertTriangle className="h-5 w-5" />
+                          {t('play.errorPlay')}
+                        </>
+                      ) : verifying ? (
+                        <>
+                          <Spinner />
+                          {t('play.verifying')}
+                        </>
+                      ) : playable ? (
                         <>
                           <Play className="h-5 w-5 fill-current" />
                           {t('play.play')}
@@ -208,13 +272,57 @@ export function PlayScreen(): JSX.Element {
                     ) : null}
                   </div>
 
-                  {activeTask && activeTask.instanceId === instance.id ? (
+                  {failed ? (
+                    <div className="w-full max-w-[460px] rounded-2xl border border-rose-400/25 bg-rose-950/35 p-3.5 text-left backdrop-blur">
+                      <div className="flex items-start gap-2.5">
+                        <span className="mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-lg bg-rose-500/15 text-rose-300">
+                          <AlertTriangle className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[12px] font-semibold text-rose-100">{t('play.errorTitle')}</div>
+                          <div className="mt-0.5 text-[11px] leading-relaxed text-rose-200/80">
+                            {errorCode === 'network_error' && errorFile
+                              ? t('errors.network_error', { file: errorFile })
+                              : errorCode
+                                ? t(`errors.${errorCode}` as TKey)
+                                : t('errors.unknown')}
+                          </div>
+                          {problemCount > 0 ? (
+                            <div className="mt-1 text-[10.5px] text-rose-200/60">
+                              {t('play.missingFiles', { count: problemCount })}
+                              {errorReport?.missing.length
+                                ? `: ${errorReport.missing.slice(0, 3).map((item) => item.name).join(', ')}`
+                                : ''}
+                            </div>
+                          ) : null}
+                          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                            <button
+                              className="flex items-center gap-1.5 rounded-lg bg-emerald px-3 py-1.5 text-[11px] font-semibold text-ink-950 transition hover:bg-emerald-glow"
+                              onClick={() => void retryInstall(instance.id)}
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              {t('play.retry')}
+                            </button>
+                            <button
+                              className="flex items-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 text-[11px] text-white/70 transition hover:border-white/25 hover:text-white"
+                              onClick={() => void checkIntegrity(instance.id)}
+                            >
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                              {t('play.verify')}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {downloading || (activeTask && activeTask.instanceId === instance.id) ? (
                     <div className="w-full max-w-[420px] rounded-2xl border border-white/10 bg-black/30 p-3.5 backdrop-blur">
                       <div className="mb-2 flex items-center justify-between gap-3 text-[11px]">
-                        <span className="truncate text-text/85">{activeTask.stage}</span>
-                        <span className="text-faint">{activeTask.total > 0 ? `${Math.round((activeTask.current / activeTask.total) * 100)}%` : '…'}</span>
+                        <span className="truncate text-text/85">{activeTask?.stage}</span>
+                        <span className="text-faint">{activeTask && activeTask.total > 0 ? `${Math.round((activeTask.current / activeTask.total) * 100)}%` : '…'}</span>
                       </div>
-                      <ProgressBar value={activeTask.current} total={activeTask.total} />
+                      <ProgressBar value={activeTask?.current ?? 0} total={activeTask?.total ?? 1} />
                     </div>
                   ) : null}
                 </div>

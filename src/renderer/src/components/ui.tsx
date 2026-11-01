@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Info,
   Loader2,
+  RotateCcw,
   X,
   XCircle
 } from 'lucide-react'
@@ -380,9 +381,12 @@ export function ToastHost({ toasts }: { toasts: ToastItem[] }): JSX.Element {
       <AnimatePresence initial={false}>
         {toasts.map((toast) => {
           const Icon = TOAST_ICON[toast.kind]
-          const description = toast.errorCode
-            ? localizeError(t, toast.errorCode)
-            : toast.description
+          // Localised sentence for known codes, otherwise whatever the caller passed.
+          const localized = toast.errorCode ? localizeError(t, toast.errorCode, toast.vars) : undefined
+          const description =
+            toast.errorCode && toast.errorCode === 'network_error' && !toast.vars?.file
+              ? t('errors.network_error.generic')
+              : localized ?? toast.description
           return (
             <motion.div
               key={toast.id}
@@ -408,7 +412,24 @@ export function ToastHost({ toasts }: { toasts: ToastItem[] }): JSX.Element {
                 <div className="text-[12.5px] font-semibold text-text">
                   {t(toast.titleKey as TKey, toast.vars)}
                 </div>
-                {description ? <div className="mt-0.5 break-words text-[11.5px] leading-relaxed text-muted">{description}</div> : null}
+                {description ? (
+                  <div className="mt-0.5 break-words text-[11.5px] leading-relaxed text-muted">{description}</div>
+                ) : null}
+                {toast.action ? (
+                  <button
+                    className={cn(
+                      'mt-2 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition',
+                      'border-rose-400/35 bg-rose-400/10 text-rose-100 hover:border-rose-300/60 hover:bg-rose-400/20'
+                    )}
+                    onClick={() => {
+                      dismiss(toast.id)
+                      toast.action?.run()
+                    }}
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    {t(toast.action.labelKey as TKey)}
+                  </button>
+                ) : null}
               </div>
               <button className="icon-btn !h-6 !w-6 text-faint hover:text-text" onClick={() => dismiss(toast.id)} aria-label="dismiss">
                 <X className="h-3.5 w-3.5" />
