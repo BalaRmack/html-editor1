@@ -3,6 +3,12 @@ import type {
   AppConfig,
   CreateInstanceInput,
   GameSnapshot,
+  ContentInstallInput,
+  ContentKind,
+  ContentQuery,
+  ContentSearchResult,
+  ContentUpdate,
+  ContentUpdateInput,
   InstalledMod,
   InstallRunResult,
   Instance,
@@ -91,6 +97,17 @@ export const IPC = {
     scan: 'java:scan',
     validate: 'java:validate',
     download: 'java:download'
+  },
+  content: {
+    search: 'content:search',
+    install: 'content:install',
+    installed: 'content:installed',
+    remove: 'content:remove',
+    toggle: 'content:toggle',
+    updates: 'content:updates',
+    update: 'content:update',
+    openFolder: 'content:open-folder',
+    openPage: 'content:open-page'
   },
   mods: {
     search: 'mods:search',
@@ -212,6 +229,17 @@ export interface LauncherApi {
     scan(): Promise<JavaRuntime[]>
     validate(path: string): Promise<JavaRuntime | null>
     download(major: number): Promise<JavaRuntime>
+  }
+  content: {
+    search(input: ContentQuery): Promise<ContentSearchResult>
+    install(input: ContentInstallInput): Promise<ModInstallResult>
+    installed(instanceId: string, kind: ContentKind): Promise<InstalledMod[]>
+    remove(instanceId: string, kind: ContentKind, fileName: string): Promise<void>
+    toggle(instanceId: string, kind: ContentKind, fileName: string, enabled: boolean): Promise<void>
+    updates(instanceId: string, kind: ContentKind): Promise<ContentUpdate[]>
+    update(input: ContentUpdateInput): Promise<void>
+    openFolder(instanceId: string, kind: ContentKind): Promise<void>
+    openPage(source: ModQuery['source'], kind: ContentKind, projectId: string): Promise<void>
   }
   mods: {
     search(query: ModQuery): Promise<ModSearchResult>

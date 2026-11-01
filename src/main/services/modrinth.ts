@@ -49,6 +49,7 @@ interface ModrinthVersionFile {
   primary: boolean
   size: number
   file_type?: string | null
+  hashes?: { sha1?: string; sha512?: string }
 }
 
 interface ModrinthVersion {
@@ -79,6 +80,13 @@ const SORT_INDEX: Record<string, string> = {
   updated: 'updated'
 }
 
+function toProjectType(value: string): ModHit['projectType'] {
+  if (value === 'modpack') return 'modpack'
+  if (value === 'resourcepack') return 'resourcepack'
+  if (value === 'shader') return 'shader'
+  return 'mod'
+}
+
 function toHit(hit: ModrinthHit, source: 'modrinth' = 'modrinth'): ModHit {
   return {
     id: hit.project_id,
@@ -92,7 +100,7 @@ function toHit(hit: ModrinthHit, source: 'modrinth' = 'modrinth'): ModHit {
     categories: hit.categories ?? [],
     loaders: [],
     gameVersions: hit.versions ?? [],
-    projectType: hit.project_type === 'modpack' ? 'modpack' : 'mod',
+    projectType: toProjectType(hit.project_type),
     updatedAt: hit.date_modified ?? null,
     source
   }
@@ -136,7 +144,7 @@ export async function modrinthProject(id: string): Promise<ModHit | null> {
       categories: project.categories ?? [],
       loaders: project.loaders ?? [],
       gameVersions: project.game_versions ?? [],
-      projectType: project.project_type === 'modpack' ? 'modpack' : 'mod',
+      projectType: toProjectType(project.project_type),
       updatedAt: project.updated,
       source: 'modrinth'
     }
@@ -158,6 +166,7 @@ export function normalizeModrinthVersion(version: ModrinthVersion): ModVersion {
     downloadUrl: file?.url ?? '',
     fileName: file?.filename ?? '',
     fileSize: file?.size ?? 0,
+    sha1: file?.hashes?.sha1 ?? null,
     dependencies: version.dependencies
       .filter((dep) => dep.dependency_type === 'required')
       .map((dep) => ({

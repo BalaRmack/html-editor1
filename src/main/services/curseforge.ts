@@ -36,6 +36,7 @@ interface CfFile {
   downloadUrl: string | null
   gameVersions: string[]
   releaseType: number
+  hashes?: { value: string; algo: number }[]
   dependencies?: { modId: number; relationType: number }[]
 }
 
@@ -66,6 +67,19 @@ async function cfFetch<T>(path: string, apiKey: string): Promise<T> {
   return fetchJson<T>(`${CURSEFORGE_API}${path}`, { headers: { 'x-api-key': apiKey } })
 }
 
+const CF_CLASS: Record<string, number> = { modpack: 4471, resourcepack: 12, shader: 6552 }
+
+export function cfClassId(projectType: ModQuery['projectType']): number {
+  return CF_CLASS[projectType ?? 'mod'] ?? 6
+}
+
+function cfProjectType(classId: number | undefined): ModHit['projectType'] {
+  if (classId === 4471) return 'modpack'
+  if (classId === 12) return 'resourcepack'
+  if (classId === 6552) return 'shader'
+  return 'mod'
+}
+
 function toHit(mod: CfMod): ModHit {
   const loaders = [...new Set((mod.latestFilesIndexes ?? []).map((index) => index.modLoader).filter(Boolean))]
   const loaderNames = loaders
@@ -83,7 +97,7 @@ function toHit(mod: CfMod): ModHit {
     categories: (mod.categories ?? []).map((category) => category.name),
     loaders: loaderNames,
     gameVersions: [...new Set((mod.latestFilesIndexes ?? []).map((index) => index.gameVersion).filter(Boolean))],
-    projectType: mod.classId === 4471 ? 'modpack' : 'mod',
+    projectType: cfProjectType(mod.classId),
     updatedAt: mod.dateModified ?? null,
     source: 'curseforge'
   }
@@ -98,7 +112,7 @@ export async function curseforgeSearch(query: ModQuery, apiKey: string): Promise
     sortOrder: 'desc',
     index: String(query.offset ?? 0),
     pageSize: String(Math.min(query.limit ?? 20, 50)),
-    classId: String(query.projectType === 'modpack' ? 4471 : 6)
+    classId: String(cfClassId(query.projectType))
   })
   if (query.mcVersion) params.set('gameVersion', query.mcVersion)
   if (query.loader && query.loader !== 'vanilla') params.set('modLoaderType', String(LOADER_ID[query.loader]))
@@ -139,6 +153,7 @@ function toVersion(projectId: string, file: CfFile): ModVersion {
     downloadUrl: fallbackUrl,
     fileName: file.fileName,
     fileSize: file.fileLength,
+    sha1: file.hashes?.find((hash) => hash.algo === 1)?.value ?? null,
     dependencies: (file.dependencies ?? [])
       .filter((dependency) => dependency.relationType === 3)
       .map((dependency) => ({

@@ -10,6 +10,10 @@ import type {
   CreateInstanceInput,
   InstallRunResult,
   InstancePatch,
+  ContentInstallInput,
+  ContentKind,
+  ContentQuery,
+  ContentUpdateInput,
   LoaderType,
   ModInstallInput,
   ModQuery,
@@ -387,6 +391,37 @@ export function registerIpc(): void {
   })
 
   // ---------- mods ----------
+  // ------------------------------------------------ content manager (instance window)
+  handle(IPC.content.search, (_event, input: ContentQuery) => modsService.searchContent(input, configStore.get().settings))
+  handle(IPC.content.install, (_event, input: ContentInstallInput) =>
+    modsService.installContent(input, configStore.get().settings)
+  )
+  handle(IPC.content.installed, (_event, instanceId: string, kind: ContentKind) => modsService.installed(instanceId, kind))
+  handle(IPC.content.remove, (_event, instanceId: string, kind: ContentKind, fileName: string) =>
+    modsService.remove(instanceId, fileName, kind)
+  )
+  handle(IPC.content.toggle, (_event, instanceId: string, kind: ContentKind, fileName: string, enabled: boolean) =>
+    modsService.toggle(instanceId, fileName, enabled, kind)
+  )
+  handle(IPC.content.updates, (_event, instanceId: string, kind: ContentKind) =>
+    modsService.checkContentUpdates(instanceId, kind, configStore.get().settings)
+  )
+  handle(IPC.content.update, (_event, input: ContentUpdateInput) =>
+    modsService.updateContent(input, configStore.get().settings)
+  )
+  handle(IPC.content.openFolder, async (_event, instanceId: string, kind: ContentKind) => {
+    await shell.openPath(await modsService.contentFolder(instanceId, kind))
+  })
+  handle(IPC.content.openPage, async (_event, source: ModQuery['source'], kind: ContentKind, projectId: string) => {
+    const segments: Record<ContentKind, string> = { mod: 'mod', resourcepack: 'resourcepack', shader: 'shader' }
+    const cfSegments: Record<ContentKind, string> = { mod: 'mc-mods', resourcepack: 'texture-packs', shader: 'shaders' }
+    const url =
+      source === 'curseforge'
+        ? `https://www.curseforge.com/minecraft/${cfSegments[kind]}/${encodeURIComponent(projectId)}`
+        : `https://modrinth.com/${segments[kind]}/${encodeURIComponent(projectId)}`
+    await shell.openExternal(url)
+  })
+
   handle(IPC.mods.search, (_event, query: ModQuery) => modsService.search(query, configStore.get().settings))
   handle(IPC.mods.project, (_event, source: ModQuery['source'], id: string) =>
     modsService.project(source, id, configStore.get().settings)

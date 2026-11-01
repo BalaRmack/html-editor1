@@ -217,3 +217,57 @@ src/renderer/ i18n RU/EN, store (Zustand), components, features/{play,instances,
 
 Скриншоты: `docs/screens/update-available.png`, `update-downloading.png`, `update-ready.png` (+ `update-idle.png`).
 Проверка: `tests/update-logic.test.ts` — 18 тестов; `npx electron-vite build` — зелёный.
+
+---
+
+## 9. Контент-менеджер инстанса (Task 2 спринта)
+
+Кнопка «Настроить» на карточке сборки открывает окно в стиле Verdant (стекло, изумруд, Framer Motion):
+слева — разделы, в центре — таблица, справа — действия. `src/renderer/src/features/ContentManager.tsx`.
+
+| Раздел | Что внутри |
+|---|---|
+| **Логи** | последние 100 строк сессии (`store.logs`), уровни подсвечены |
+| **Версии** | версия игры, загрузчик + версия, дата последнего запуска, состояние файлов, путь сборки |
+| **Modrinth** | каталог с поиском под эту сборку (моды / ресурспаки / шейдеры) |
+| **Моды / Ресурспаки / Шейдеры** | таблица: чекбокс, название, версия, дата, автор, статус |
+
+### 9.1. Главное требование: 100 % совместимость
+
+Правило живёт в чистом модуле `src/main/services/content-logic.ts` (без `electron`, 24 теста в
+`tests/content-logic.test.ts`):
+
+- `versionMatches` — точное совпадение версии игры (`1.21` **не** подходит для `1.21.4`);
+- `loaderMatches` — Fabric-мод не попадёт в Forge; Quilt принимает Fabric, обратное — нет;
+- `isCompatible` / `filterCompatible` — фильтр «версия + загрузчик» для модов, «версия» для паков и шейдеров;
+- `pickCompatibleVersion` — самый свежий билд, который всё ещё поддерживает инстанс;
+- `isNewerBuild` — обновление, если другой `versionId` **или** другой SHA-1 (тихая пересборка того же номера тоже ловится).
+
+Соблюдение на уровне main-процесса: `modsService.searchContent()` сам подставляет
+`instance.mcVersion` и `instance.loader` в запрос (Modrinth facets `versions:` / `categories:`,
+CurseForge `gameVersion` + `modLoaderType`, classId 6/12/6552) и **повторно** фильтрует ответ.
+Renderer не может запросить несовместимый каталог — параметров для этого в IPC просто нет.
+
+### 9.2. Установка и зависимости
+
+`api.content.install` → `modsService.installContent`: для модов переиспользуется старый
+`installRecursive` (обязательные зависимости ставятся автоматически, глубина ≤ 6, повторно не качаются),
+для паков и шейдеров — загрузка в `resourcepacks/` / `shaderpacks/`. В `mods.json` теперь пишутся
+`kind`, `versionId`, `sha1`, `author` — из них строится таблица и проверка обновлений.
+
+### 9.3. «Проверить обновления»
+
+`api.content.updates(instanceId, kind)` перебирает записи манифеста, спрашивает у источника свежие версии
+для этой сборки и сравнивает `versionId` + SHA-1. Обновлённые строки получают золотой бейдж «Обновление»,
+в таблице видно `0.6.5 → 1.2.0`, справа — кнопка «Обновить». Применение (`api.content.update`) качает новый
+файл, удаляет заменённый и обновляет манифест.
+
+### 9.4. Действия
+
+Удалить, Включить/Отключить (`name.jar` ⇄ `name.jar.disabled`), Открыть папку, Открыть страницу проекта
+(Modrinth/CurseForge по типу контента). Всё — в правой панели, с иконками lucide, без эмодзи.
+
+Скриншоты: `docs/screens/content-mods.png`, `content-updates.png`, `content-updated.png`,
+`content-catalog.png`, `content-versions.png`, `content-logs.png`, `content-resourcepacks.png`.
+Тесты: `tests/content-logic.test.ts` (24) + `tests/content-manager.test.tsx` (4, jsdom).
+`npx electron-vite build` — зелёный.

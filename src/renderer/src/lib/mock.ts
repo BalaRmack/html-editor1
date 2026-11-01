@@ -2,6 +2,7 @@ import type { LauncherApi } from '../../../shared/ipc'
 import { APP_VERSION, DEFAULT_SETTINGS } from '../../../shared/constants'
 import type {
   AppSettings,
+  ContentUpdate,
   GameSnapshot,
   InstallRunResult,
   InstalledMod,
@@ -119,6 +120,12 @@ const DEMO_RELEASE = {
 }
 
 const mockControl = {
+  /** Restores the demo content lists — used by UI tests to stay independent. */
+  resetContent(): void {
+    for (const [instanceId, list] of Object.entries(DEMO_INSTALLED)) installedMods[instanceId] = list.map((entry) => ({ ...entry }))
+    installedExtras.resourcepack = DEMO_EXTRAS.resourcepack.map((entry) => ({ ...entry }))
+    installedExtras.shader = DEMO_EXTRAS.shader.map((entry) => ({ ...entry }))
+  },
   /** Shows the update banner as if GitHub had a newer release. */
   offerUpdate(version = '1.2.0'): UpdateState {
     return emitUpdate({
@@ -315,6 +322,96 @@ const MODS: Omit<ModHit, 'source'>[] = [
   }
 ]
 
+
+/** Resource packs & shaders shown by the instance «Настроить» window in the demo. */
+const CONTENT_CATALOG: Record<'resourcepack' | 'shader', Omit<ModHit, 'source'>[]> = {
+  resourcepack: [
+    {
+      id: 'fresh-animations',
+      slug: 'fresh-animations',
+      name: 'Fresh Animations',
+      summary: 'Living, breathing mob animations that stay true to vanilla.',
+      author: 'FreshLX',
+      downloads: 41_200_000,
+      follows: 88_000,
+      iconUrl: null,
+      categories: ['16x'],
+      loaders: ['minecraft'],
+      gameVersions: ['1.21.4', '1.21.1'],
+      projectType: 'resourcepack',
+      updatedAt: now
+    },
+    {
+      id: 'stay-true',
+      slug: 'stay-true',
+      name: 'Stay True',
+      summary: 'A classic vanilla-flavoured pack with hand-drawn textures.',
+      author: 'Amb',
+      downloads: 12_800_000,
+      follows: 21_000,
+      iconUrl: null,
+      categories: ['16x'],
+      loaders: ['minecraft'],
+      gameVersions: ['1.21.4'],
+      projectType: 'resourcepack',
+      updatedAt: now
+    }
+  ],
+  shader: [
+    {
+      id: 'complementary',
+      slug: 'complementary',
+      name: 'Complementary Reimagined',
+      summary: 'Soft lighting, volumetric clouds and clean water.',
+      author: 'EminGT',
+      downloads: 22_400_000,
+      follows: 47_000,
+      iconUrl: null,
+      categories: ['shaders'],
+      loaders: ['minecraft'],
+      gameVersions: ['1.21.4', '1.21.1'],
+      projectType: 'shader',
+      updatedAt: now
+    },
+    {
+      id: 'bliss',
+      slug: 'bliss',
+      name: 'Bliss Shaders',
+      summary: 'Cinematic golden-hour look with a light performance footprint.',
+      author: 'Xonk',
+      downloads: 6_100_000,
+      follows: 12_400,
+      iconUrl: null,
+      categories: ['shaders'],
+      loaders: ['minecraft'],
+      gameVersions: ['1.21.4'],
+      projectType: 'shader',
+      updatedAt: now
+    }
+  ]
+}
+
+/** Installed packs/shaders for the demo instance — mods live in `installedMods`. */
+const installedExtras: Record<'resourcepack' | 'shader', InstalledMod[]> = {
+  resourcepack: [
+    {
+      projectId: 'fresh-animations',
+      fileName: 'FreshAnimations_v1.9.zip',
+      name: 'Fresh Animations',
+      version: 'v1.9',
+      iconUrl: null,
+      enabled: true,
+      source: 'modrinth',
+      size: 4_800_000,
+      installedAt: now,
+      versionId: 'fresh-animations-v1',
+      sha1: 'fresh-animations-sha1-1.9',
+      author: 'FreshLX'
+    }
+  ],
+  shader: []
+}
+
 const installedMods: Record<string, InstalledMod[]> = {
   a1: [
     {
@@ -326,7 +423,10 @@ const installedMods: Record<string, InstalledMod[]> = {
       enabled: true,
       source: 'modrinth',
       size: 1_240_000,
-      installedAt: now
+      installedAt: now,
+      versionId: null,
+      sha1: null,
+      author: 'jellysquid3'
     },
     {
       projectId: 'iris',
@@ -337,7 +437,10 @@ const installedMods: Record<string, InstalledMod[]> = {
       enabled: true,
       source: 'modrinth',
       size: 3_400_000,
-      installedAt: now
+      installedAt: now,
+      versionId: null,
+      sha1: null,
+      author: 'coderbot'
     },
     {
       projectId: 'fabric-api',
@@ -348,7 +451,10 @@ const installedMods: Record<string, InstalledMod[]> = {
       enabled: true,
       source: 'modrinth',
       size: 2_100_000,
-      installedAt: now
+      installedAt: now,
+      versionId: null,
+      sha1: null,
+      author: 'modmuss50'
     },
     {
       projectId: 'modmenu',
@@ -359,12 +465,21 @@ const installedMods: Record<string, InstalledMod[]> = {
       enabled: false,
       source: 'modrinth',
       size: 620_000,
-      installedAt: now
+      installedAt: now,
+      versionId: null,
+      sha1: null,
+      author: 'Prospector'
     }
   ],
   a2: [],
   a3: []
 }
+
+/** Frozen copies of the demo lists, so `resetContent()` can bring deletions back. */
+const DEMO_INSTALLED: Record<string, InstalledMod[]> = JSON.parse(JSON.stringify(installedMods)) as Record<string, InstalledMod[]>
+const DEMO_EXTRAS: Record<'resourcepack' | 'shader', InstalledMod[]> = JSON.parse(
+  JSON.stringify(installedExtras)
+) as Record<'resourcepack' | 'shader', InstalledMod[]>
 
 /** A simulated install stage: byte-based so the UI can show real-looking progress. */
 interface MockStage {
@@ -546,6 +661,7 @@ const modVersions = (projectId: string, mcVersion: string, loader: string): ModV
       downloadUrl: `https://example.invalid/${projectId}.jar`,
       fileName: `${projectId}-1.2.0.jar`,
       fileSize: 1_800_000,
+      sha1: `${projectId}-sha1-1.2.0`,
       dependencies: projectId === 'iris' ? [{ projectId: 'sodium', versionId: null, kind: 'required' }] : []
     },
     {
@@ -559,6 +675,7 @@ const modVersions = (projectId: string, mcVersion: string, loader: string): ModV
       downloadUrl: `https://example.invalid/${projectId}-old.jar`,
       fileName: `${projectId}-1.1.4.jar`,
       fileSize: 1_700_000,
+      sha1: `${projectId}-sha1-1.1.4`,
       dependencies: []
     }
   ]
@@ -859,6 +976,141 @@ export function createMockApi(): LauncherApi {
         }
       }
     },
+    content: {
+      search: async (input) => {
+        await sleep(240)
+        const instance = instances.find((item) => item.id === input.instanceId)!
+        const text = (input.query ?? '').toLowerCase()
+        const source: Omit<ModHit, 'source'>[] =
+          input.kind === 'mod'
+            ? MODS.filter((mod) => mod.projectType === 'mod')
+            : CONTENT_CATALOG[input.kind]
+        // Same rule as the main process: exact game version + loader, always.
+        const hits = source.filter((hit) => {
+          if (!hit.gameVersions.includes(instance.mcVersion)) return false
+          if (input.kind !== 'mod') return true
+          return instance.loader === 'vanilla' ? false : hit.loaders.includes(instance.loader)
+        })
+        const filtered = hits
+          .filter((hit) => !text || hit.name.toLowerCase().includes(text) || hit.summary.toLowerCase().includes(text))
+          .map((hit) => ({ ...hit, source: settings.modSource }))
+        return {
+          hits: filtered,
+          total: filtered.length,
+          offset: 0,
+          limit: input.limit ?? 20,
+          mcVersion: instance.mcVersion,
+          loader: instance.loader,
+          kind: input.kind
+        }
+      },
+      install: async (input) => {
+        const instance = instances.find((item) => item.id === input.instanceId)!
+        await tick('Установка контента', [{ key: 'packDownload', label: 'Загрузка файла', total: 1.4 * MB, ms: 700 }], instance.id)
+        const project =
+          MODS.find((item) => item.id === input.projectId) ??
+          (input.kind === 'mod' ? null : CONTENT_CATALOG[input.kind].find((item) => item.id === input.projectId) ?? null)
+        const fileName = `${input.projectId}-1.2.0.${input.kind === 'mod' ? 'jar' : 'zip'}`
+        if (input.kind === 'mod') {
+          const list = installedMods[instance.id] ?? []
+          list.push({
+            projectId: input.projectId,
+            fileName,
+            name: project?.name ?? input.projectId,
+            version: '1.2.0',
+            iconUrl: null,
+            enabled: true,
+            source: input.source,
+            size: 1_200_000,
+            installedAt: now,
+            versionId: `${input.projectId}-v1`,
+            sha1: `${input.projectId}-sha1-1.2.0`,
+            author: project?.author ?? null
+          })
+          installedMods[instance.id] = list
+          instance.modsCount = list.length
+        } else {
+          const list = installedExtras[input.kind]
+          list.push({
+            projectId: input.projectId,
+            fileName,
+            name: project?.name ?? input.projectId,
+            version: '1.2.0',
+            iconUrl: null,
+            enabled: true,
+            source: input.source,
+            size: 3_200_000,
+            installedAt: now,
+            versionId: `${input.projectId}-v1`,
+            sha1: `${input.projectId}-sha1-1.2.0`,
+            author: project?.author ?? null
+          })
+        }
+        emitInstances()
+        return { installed: [fileName], skipped: [], warnings: [] }
+      },
+      installed: async (instanceId, kind) => {
+        await sleep(160)
+        return kind === 'mod' ? [...(installedMods[instanceId] ?? [])] : [...installedExtras[kind]]
+      },
+      remove: async (instanceId, kind, fileName) => {
+        await sleep(180)
+        if (kind === 'mod') {
+          installedMods[instanceId] = (installedMods[instanceId] ?? []).filter((entry) => entry.fileName !== fileName)
+          const instance = instances.find((item) => item.id === instanceId)
+          if (instance) instance.modsCount = installedMods[instanceId].length
+          emitInstances()
+        } else {
+          installedExtras[kind] = installedExtras[kind].filter((entry) => entry.fileName !== fileName)
+        }
+      },
+      toggle: async (instanceId, kind, fileName, enabled) => {
+        await sleep(120)
+        const list = kind === 'mod' ? installedMods[instanceId] ?? [] : installedExtras[kind]
+        const entry = list.find((item) => item.fileName === fileName)
+        if (entry) entry.enabled = enabled
+      },
+      updates: async (instanceId, kind) => {
+        await sleep(420)
+        const instance = instances.find((item) => item.id === instanceId)!
+        const installed = kind === 'mod' ? installedMods[instanceId] ?? [] : installedExtras[kind]
+        const result: ContentUpdate[] = []
+        for (const entry of installed) {
+          if (!entry.projectId) continue
+          const candidates =
+            kind === 'mod' ? modVersions(entry.projectId, instance.mcVersion, instance.loader) : modVersions(entry.projectId, instance.mcVersion, 'minecraft')
+          const latest = candidates[0]
+          if (!latest || latest.versionNumber === entry.version) continue
+          // Only a couple of demo files are "outdated" so the UI stays readable.
+          if (kind === 'mod' && entry.projectId !== 'sodium' && entry.projectId !== 'modmenu') continue
+          result.push({
+            kind,
+            projectId: entry.projectId,
+            fileName: entry.fileName,
+            name: entry.name,
+            iconUrl: entry.iconUrl,
+            currentVersion: entry.version,
+            latestVersion: latest.versionNumber,
+            versionId: latest.id,
+            sha1: latest.sha1,
+            publishedAt: latest.datePublished
+          })
+        }
+        return result
+      },
+      update: async (input) => {
+        await tick('Обновление контента', [{ key: 'packDownload', label: 'Загрузка файла', total: 1.6 * MB, ms: 600 }], input.instanceId)
+        const list = input.kind === 'mod' ? installedMods[input.instanceId] ?? [] : installedExtras[input.kind]
+        const entry = list.find((item) => item.projectId === input.projectId)
+        if (entry) {
+          entry.version = '1.2.0'
+          entry.versionId = input.versionId ?? `${input.projectId}-v1`
+          entry.sha1 = `${input.projectId}-sha1-1.2.0`
+        }
+      },
+      openFolder: async () => undefined,
+      openPage: async () => undefined
+    },
     mods: {
       search: async (query) => {
         await sleep(420)
@@ -894,6 +1146,7 @@ export function createMockApi(): LauncherApi {
             downloadUrl: `https://example.invalid/${projectId}-${gameVersion}.mrpack`,
             fileName: `${projectId}-${gameVersion}.mrpack`,
             fileSize: 28_000_000 + index * 3_400_000,
+            sha1: `${projectId}-${gameVersion}-sha1`,
             dependencies: []
           }
         ])
@@ -917,7 +1170,10 @@ export function createMockApi(): LauncherApi {
           enabled: true,
           source: input.source,
           size: 1_200_000,
-          installedAt: now
+          installedAt: now,
+          versionId: `${input.projectId}-v1`,
+          sha1: `${input.projectId}-sha1-1.2.0`,
+          author: mod?.author ?? null
         })
         installedMods[input.instanceId] = list
         instance.modsCount = list.length

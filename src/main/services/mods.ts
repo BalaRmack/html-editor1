@@ -5,6 +5,12 @@ import { randomUUID } from 'node:crypto'
 import AdmZip from 'adm-zip'
 import type {
   AppSettings,
+  ContentInstallInput,
+  ContentKind,
+  ContentQuery,
+  ContentSearchResult,
+  ContentUpdate,
+  ContentUpdateInput,
   Instance,
   InstalledMod,
   LoaderType,
@@ -16,6 +22,13 @@ import type {
   ModVersion,
   ModpackInstallInput
 } from '../../shared/types'
+import {
+  CONTENT_DIR,
+  CONTENT_PROJECT_TYPE,
+  filterCompatible,
+  isNewerBuild,
+  pickCompatibleVersion
+} from './content-logic'
 import { curseforgeFile, curseforgePackVersions, curseforgeProject, curseforgeSearch, curseforgeVersions } from './curseforge'
 import { instances } from './instances'
 import { installer } from './installer'
@@ -40,6 +53,13 @@ interface ManifestEntry {
   iconUrl: string | null
   source: 'modrinth' | 'curseforge'
   installedAt: string
+  /** What the entry belongs to; older manifests only had mods. */
+  kind?: ContentKind
+  /** Source version id — the basis of the update check. */
+  versionId?: string | null
+  /** SHA-1 of the file we installed (Modrinth/CurseForge both publish it). */
+  sha1?: string | null
+  author?: string | null
 }
 
 interface Manifest {
@@ -108,10 +128,10 @@ export class ModsService {
       : modrinthVersions(projectId, mcVersion, loader)
   }
 
-  async installed(instanceId: string): Promise<InstalledMod[]> {
+  async installed(instanceId: string, kind: ContentKind = 'mod'): Promise<InstalledMod[]> {
     const instance = await instances.get(instanceId)
     const manifest = await this.readManifest(instanceId)
-    const modsDir = join(instance.gameDir, 'mods')
+    const modsDir = join(instance.gameDir, CONTENT_DIR[kind])
     let files: string[] = []
     try {
       files = (await readdir(modsDir)).filter((file) => /\.jar(\.disabled)?$/i.test(file))
@@ -119,7 +139,8 @@ export class ModsService {
       files = []
     }
 
-    const byFile = new Map(Object.values(manifest.mods).map((entry) => [entry.fileName, entry]))
+    const entries = Object.values(manifest.mods).filter((entry) => (entry.kind ?? 'mod') === kind)
+    const byFile = new Map(entries.map((entry) => [entry.fileName, entry]))
     const result: InstalledMod[] = []
     for (const file of files) {
       const entry = byFile.get(file) ?? byFile.get(file.replace(/\.disabled$/, ''))
@@ -133,15 +154,18 @@ export class ModsService {
         enabled: !file.endsWith('.disabled'),
         source: entry?.source ?? 'manual',
         size: info?.size ?? 0,
-        installedAt: entry?.installedAt ?? new Date().toISOString()
+        installedAt: entry?.installedAt ?? new Date().toISOString(),
+        versionId: entry?.versionId ?? null,
+        sha1: entry?.sha1 ?? null,
+        author: entry?.author ?? null
       })
     }
     return result.sort((a, b) => a.name.localeCompare(b.name))
   }
 
-  async remove(instanceId: string, fileName: string): Promise<void> {
+  async remove(instanceId: string, fileName: string, kind: ContentKind = 'mod'): Promise<void> {
     const instance = await instances.get(instanceId)
-    const target = safeJoin(join(instance.gameDir, 'mods'), basename(fileName))
+    const target = safeJoin(join(instance.gameDir, CONTENT_DIR[kind]), basename(fileName))
     await rm(target, { force: true }).catch(() => undefined)
     await rm(`${target}.disabled`, { force: true }).catch(() => undefined)
 
@@ -150,12 +174,12 @@ export class ModsService {
       if (entry.fileName === fileName || `${entry.fileName}.disabled` === fileName) delete manifest.mods[key]
     }
     await this.writeManifest(instanceId, manifest)
-    logger.info(`Мод ${fileName} удалён из «${instance.name}»`)
+    logger.info(`Удалён файл ${fileName} из «${instance.name}»`)
   }
 
-  async toggle(instanceId: string, fileName: string, enabled: boolean): Promise<void> {
+  async toggle(instanceId: string, fileName: string, enabled: boolean, kind: ContentKind = 'mod'): Promise<void> {
     const instance = await instances.get(instanceId)
-    const modsDir = join(instance.gameDir, 'mods')
+    const modsDir = join(instance.gameDir, CONTENT_DIR[kind])
     const plain = join(modsDir, basename(fileName).replace(/\.disabled$/, ''))
     const disabled = `${plain}.disabled`
     if (enabled) {
@@ -247,7 +271,10 @@ export class ModsService {
       version: version.versionNumber,
       iconUrl: project?.iconUrl ?? null,
       source,
-      installedAt: new Date().toISOString()
+      installedAt: new Date().toISOString(),
+      versionId: version.id,
+      sha1: version.sha1,
+      author: project?.author ?? null
     }
     result.installed.push(fileName)
     task.bump()
@@ -273,6 +300,208 @@ export class ModsService {
         depth + 1
       )
     }
+  }
+
+  // ---------------------------------------------------------------- content manager
+
+  /**
+   * Search for the instance «Настроить» window.
+   *
+   * The instance's own `mcVersion` + `loader` are injected here, on the trusted
+   * side, and the response is filtered again — the renderer cannot ask for an
+   * incompatible catalogue even by mistake.
+   */
+  async searchContent(input: ContentQuery, settings: AppSettings): Promise<ContentSearchResult> {
+    const instance = await instances.get(input.instanceId)
+    const empty: ContentSearchResult = {
+      hits: [],
+      total: 0,
+      offset: 0,
+      limit: input.limit ?? 20,
+      mcVersion: instance.mcVersion,
+      loader: instance.loader,
+      kind: input.kind
+    }
+    // No loader → mods cannot work at all; packs and shaders still can.
+    if (input.kind === 'mod' && instance.loader === 'vanilla') return empty
+
+    const query: ModQuery = {
+      source: settings.modSource,
+      query: input.query,
+      mcVersion: instance.mcVersion,
+      loader: input.kind === 'mod' ? instance.loader : null,
+      projectType: CONTENT_PROJECT_TYPE[input.kind],
+      offset: input.offset ?? 0,
+      limit: input.limit ?? 20,
+      sort: 'relevance'
+    }
+    const result = await this.search(query, settings)
+    const hits = filterCompatible(result.hits, { mcVersion: instance.mcVersion, loader: instance.loader }, input.kind)
+    return { ...empty, hits, total: result.total }
+  }
+
+  /** Installs one project into the right folder, with required dependencies for mods. */
+  async installContent(input: ContentInstallInput, settings: AppSettings): Promise<ModInstallResult> {
+    if (input.kind === 'mod') {
+      return this.install(
+        {
+          instanceId: input.instanceId,
+          source: input.source,
+          projectId: input.projectId,
+          projectName: input.projectName,
+          projectIcon: input.projectIcon,
+          versionId: input.versionId,
+          withDependencies: true
+        },
+        settings
+      )
+    }
+
+    const instance = await instances.get(input.instanceId)
+    const versions = await this.versionsFor(input.kind, input.source, input.projectId, instance, settings)
+    const version = input.versionId
+      ? versions.find((entry) => entry.id === input.versionId) ?? null
+      : pickCompatibleVersion(versions, { mcVersion: instance.mcVersion, loader: instance.loader }, input.kind)
+    if (!version) {
+      const error = new Error(`Нет версии для ${instance.mcVersion}`)
+      ;(error as Error & { code?: string }).code = 'incompatible'
+      throw error
+    }
+
+    const dir = join(instance.gameDir, CONTENT_DIR[input.kind])
+    await mkdir(dir, { recursive: true })
+    const fileName = basename(version.fileName || `${input.projectId}.zip`)
+    const destination = join(dir, fileName)
+    const task = tasks.create(`Установка ${fileName}`, { instanceId: instance.id, unit: 'files' })
+    try {
+      await downloadFile(version.downloadUrl, destination)
+      const manifest = await this.readManifest(instance.id)
+      const project = await this.project(input.source, input.projectId, settings).catch(() => null)
+      manifest.mods[`${input.kind}:${input.projectId}`] = {
+        projectId: input.projectId,
+        fileName,
+        name: project?.name ?? input.projectName ?? shortName(fileName),
+        version: version.versionNumber,
+        iconUrl: project?.iconUrl ?? input.projectIcon ?? null,
+        source: input.source,
+        installedAt: new Date().toISOString(),
+        kind: input.kind,
+        versionId: version.id,
+        sha1: version.sha1,
+        author: project?.author ?? null
+      }
+      await this.writeManifest(instance.id, manifest)
+      task.done(`Установлено: ${fileName}`)
+      return { installed: [fileName], skipped: [], warnings: [] }
+    } catch (error) {
+      task.fail((error as Error).message)
+      throw error
+    }
+  }
+
+  /** Versions of a project filtered for this instance and kind. */
+  private async versionsFor(
+    kind: ContentKind,
+    source: 'modrinth' | 'curseforge',
+    projectId: string,
+    instance: Instance,
+    settings: AppSettings
+  ): Promise<ModVersion[]> {
+    if (kind === 'mod') return this.versions(source, projectId, instance.mcVersion, instance.loader, settings)
+    // Packs/shaders are loader-agnostic: filter by game version only.
+    return source === 'curseforge'
+      ? curseforgeVersions(projectId, instance.mcVersion, 'vanilla', settings.curseForgeApiKey)
+      : modrinthVersionsForPack(projectId, instance.mcVersion)
+  }
+
+  /**
+   * «Проверить обновления»: every tracked file (project + version + SHA-1) is
+   * compared with the newest build that still supports this instance.
+   */
+  async checkContentUpdates(instanceId: string, kind: ContentKind, settings: AppSettings): Promise<ContentUpdate[]> {
+    const instance = await instances.get(instanceId)
+    const manifest = await this.readManifest(instanceId)
+    const entries = Object.values(manifest.mods).filter((entry) => (entry.kind ?? 'mod') === kind)
+    const updates: ContentUpdate[] = []
+
+    for (const entry of entries) {
+      if (!entry.projectId) continue
+      const versions = await this.versionsFor(kind, entry.source, entry.projectId, instance, settings).catch(() => [])
+      const candidate = pickCompatibleVersion(
+        versions,
+        { mcVersion: instance.mcVersion, loader: instance.loader },
+        kind
+      )
+      if (!candidate) continue
+      if (!isNewerBuild({ version: entry.version, sha1: entry.sha1 ?? null, versionId: entry.versionId ?? null }, candidate)) {
+        continue
+      }
+      updates.push({
+        kind,
+        projectId: entry.projectId,
+        fileName: entry.fileName,
+        name: entry.name,
+        iconUrl: entry.iconUrl,
+        currentVersion: entry.version,
+        latestVersion: candidate.versionNumber,
+        versionId: candidate.id,
+        sha1: candidate.sha1,
+        publishedAt: candidate.datePublished
+      })
+    }
+    return updates
+  }
+
+  /** Applies one update: downloads the new build and removes the replaced file. */
+  async updateContent(input: ContentUpdateInput, settings: AppSettings): Promise<void> {
+    const instance = await instances.get(input.instanceId)
+    const manifest = await this.readManifest(instance.id)
+    const key = Object.keys(manifest.mods).find((entryKey) => {
+      const entry = manifest.mods[entryKey]
+      return entry.projectId === input.projectId && (entry.kind ?? 'mod') === input.kind
+    })
+    const entry = key ? manifest.mods[key] : null
+    if (!entry) throw new Error('Файл не найден в манифесте сборки')
+
+    const versions = await this.versionsFor(input.kind, entry.source, input.projectId, instance, settings)
+    const version = input.versionId
+      ? versions.find((item) => item.id === input.versionId) ?? null
+      : pickCompatibleVersion(versions, { mcVersion: instance.mcVersion, loader: instance.loader }, input.kind)
+    if (!version) throw new Error(`Нет версии для ${instance.mcVersion}`)
+
+    const dir = join(instance.gameDir, CONTENT_DIR[input.kind])
+    const fileName = basename(version.fileName || entry.fileName)
+    const destination = join(dir, fileName)
+    const task = tasks.create(`Обновление ${entry.name}`, { instanceId: instance.id, unit: 'files' })
+    try {
+      await downloadFile(version.downloadUrl, destination)
+      if (fileName !== entry.fileName) {
+        await rm(join(dir, entry.fileName), { force: true }).catch(() => undefined)
+        await rm(join(dir, `${entry.fileName}.disabled`), { force: true }).catch(() => undefined)
+      }
+      manifest.mods[key!] = {
+        ...entry,
+        fileName,
+        version: version.versionNumber,
+        versionId: version.id,
+        sha1: version.sha1,
+        installedAt: new Date().toISOString()
+      }
+      await this.writeManifest(instance.id, manifest)
+      task.done(`Обновлено: ${fileName}`)
+      logger.info(`${entry.name} обновлён до ${version.versionNumber} в «${instance.name}»`)
+    } catch (error) {
+      task.fail((error as Error).message)
+      throw error
+    }
+  }
+
+  /** Absolute path of the folder that holds this kind of content. */
+  async contentFolder(instanceId: string, kind: ContentKind): Promise<string> {
+    const instance = await instances.get(instanceId)
+    const dir = join(instance.gameDir, CONTENT_DIR[kind])
+    await mkdir(dir, { recursive: true })
+    return dir
   }
 
   /** Installs a Modrinth `.mrpack` or CurseForge modpack into a brand new instance. */

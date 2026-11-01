@@ -23,6 +23,7 @@ import { useT } from '../i18n'
 import { api } from '../lib/api'
 import { cn, formatGb, instanceGradient, relativeTime } from '../lib/utils'
 import { useAppStore } from '../store/app'
+import { ContentManagerHost } from './ContentManager'
 
 function InstanceCard({
   instance,
@@ -151,6 +152,7 @@ export function InstancesScreen(): JSX.Element {
   const [renameFor, setRenameFor] = useState<Instance | null>(null)
   const [deleteFor, setDeleteFor] = useState<Instance | null>(null)
   const [editFor, setEditFor] = useState<Instance | null>(null)
+  const [managerFor, setManagerFor] = useState<Instance | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [editMemory, setEditMemory] = useState(4096)
   const [editArgs, setEditArgs] = useState('')
@@ -230,7 +232,7 @@ export function InstancesScreen(): JSX.Element {
                   setSelected(instance.id)
                   void installInstance(instance.id)
                 }}
-                onConfigure={() => setEditFor(instance)}
+                onConfigure={() => setManagerFor(instance)}
                 onMenu={(event) => {
                   event.stopPropagation()
                   setMenuFor((current) => (current === instance.id ? null : instance.id))
@@ -454,6 +456,9 @@ export function InstancesScreen(): JSX.Element {
           </div>
         </div>
       </Modal>
+
+      {/* instance «Настроить» window: logs / versions / modrinth / mods / packs / shaders */}
+      <ContentManagerHost instance={managerFor} onClose={() => setManagerFor(null)} />
     </div>
   )
 }

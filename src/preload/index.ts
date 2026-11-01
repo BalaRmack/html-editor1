@@ -122,6 +122,17 @@ const api: LauncherApi = {
     validate: (path: string) => invoke<JavaRuntime | null>(IPC.java.validate, path),
     download: (major: number) => invoke<JavaRuntime>(IPC.java.download, major)
   },
+  content: {
+    search: (input) => invoke(IPC.content.search, input),
+    install: (input) => invoke(IPC.content.install, input),
+    installed: (instanceId, kind) => invoke(IPC.content.installed, instanceId, kind),
+    remove: (instanceId, kind, fileName) => invoke(IPC.content.remove, instanceId, kind, fileName),
+    toggle: (instanceId, kind, fileName, enabled) => invoke(IPC.content.toggle, instanceId, kind, fileName, enabled),
+    updates: (instanceId, kind) => invoke(IPC.content.updates, instanceId, kind),
+    update: (input) => invoke(IPC.content.update, input),
+    openFolder: (instanceId, kind) => invoke(IPC.content.openFolder, instanceId, kind),
+    openPage: (source, kind, projectId) => invoke(IPC.content.openPage, source, kind, projectId)
+  },
   mods: {
     search: (query: ModQuery) => invoke<ModSearchResult>(IPC.mods.search, query),
     project: (source: ModQuery['source'], id: string) => invoke<ModHit | null>(IPC.mods.project, source, id),

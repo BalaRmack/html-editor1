@@ -140,7 +140,7 @@ export interface ModQuery {
   sort?: ModSort
   offset?: number
   limit?: number
-  projectType?: 'mod' | 'modpack'
+  projectType?: 'mod' | 'modpack' | 'resourcepack' | 'shader'
 }
 
 export interface ModHit {
@@ -155,7 +155,7 @@ export interface ModHit {
   categories: string[]
   loaders: string[]
   gameVersions: string[]
-  projectType: 'mod' | 'modpack'
+  projectType: 'mod' | 'modpack' | 'resourcepack' | 'shader'
   updatedAt: string | null
   source: ModSource
 }
@@ -185,6 +185,8 @@ export interface ModVersion {
   downloadUrl: string
   fileName: string
   fileSize: number
+  /** SHA-1 of the primary file — how we prove a build is really newer. */
+  sha1: string | null
   dependencies: ModDependency[]
 }
 
@@ -198,6 +200,60 @@ export interface InstalledMod {
   source: ModSource | 'manual'
   size: number
   installedAt: string
+  /** Version id on the source (`null` for hand-dropped jars). */
+  versionId: string | null
+  /** SHA-1 of the installed file, used for the update check. */
+  sha1: string | null
+  /** Author shown in the content-manager table. */
+  author: string | null
+}
+
+/** Everything the instance «Настроить» window can manage. */
+export type ContentKind = 'mod' | 'resourcepack' | 'shader'
+
+export interface ContentQuery {
+  instanceId: string
+  kind: ContentKind
+  query: string
+  offset?: number
+  limit?: number
+}
+
+export interface ContentSearchResult extends ModSearchResult {
+  /** The filters the main process applied — shown as a badge in the window. */
+  mcVersion: string
+  loader: LoaderType
+  kind: ContentKind
+}
+
+export interface ContentInstallInput {
+  instanceId: string
+  kind: ContentKind
+  source: ModSource
+  projectId: string
+  projectName?: string
+  projectIcon?: string | null
+  versionId?: string | null
+}
+
+export interface ContentUpdate {
+  kind: ContentKind
+  projectId: string
+  fileName: string
+  name: string
+  iconUrl: string | null
+  currentVersion: string
+  latestVersion: string
+  versionId: string
+  sha1: string | null
+  publishedAt: string | null
+}
+
+export interface ContentUpdateInput {
+  instanceId: string
+  kind: ContentKind
+  projectId: string
+  versionId?: string | null
 }
 
 export interface ModInstallInput {
