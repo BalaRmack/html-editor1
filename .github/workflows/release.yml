@@ -38,10 +38,30 @@ jobs:
         run: npm ci
 
       - name: Unit tests
-        run: npm run test
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npx vitest run --config vitest.config.ts 2>&1 | tee unit-tests.log; then
+            N=0
+            grep -inE "FAIL|AssertionError|Error:|expected" unit-tests.log | sed 's/^[[:space:]]*//' | tail -n 12 | while IFS= read -r line; do
+              N=$((N + 1))
+              echo "::error title=T$N::$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-800)"
+            done
+            exit 1
+          fi
 
       - name: Renderer smoke tests
-        run: npm run test:ui
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npx vitest run --config vitest.ui.config.ts 2>&1 | tee ui-tests.log; then
+            N=0
+            grep -inE "FAIL|AssertionError|Error:|expected" ui-tests.log | sed 's/^[[:space:]]*//' | tail -n 12 | while IFS= read -r line; do
+              N=$((N + 1))
+              echo "::error title=U$N::$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-800)"
+            done
+            exit 1
+          fi
 
       - name: Typecheck
         run: npm run typecheck
