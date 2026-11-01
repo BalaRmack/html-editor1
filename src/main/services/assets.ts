@@ -163,6 +163,10 @@ export async function planMissing(files: readonly PlannedFile[]): Promise<Missin
       bytes += file.size ?? 0
     })
   )
+  // `Promise.all` finishes in whatever order the disk answers, so the queue is
+  // sorted by path: a resume run then shows the same list on every machine and
+  // the error message ("не удалось скачать X") is reproducible.
+  todo.sort((a, b) => a.path.localeCompare(b.path))
   return { todo, bytes, present }
 }
 

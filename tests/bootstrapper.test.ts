@@ -103,7 +103,15 @@ describe('payload archive', () => {
     const zip = join(await mkdtemp(join(tmpdir(), 'verdant-zip-out-')), 'app.zip')
     try {
       await mkdir(join(source, 'resources'), { recursive: true })
-      await writeFile(join(source, 'VerdantLauncher.exe'), Buffer.alloc(4096, 3))
+      // 320 KB of pseudo-random bytes: big enough to arrive in many chunks, so
+      // a lost first chunk (the Windows race fixed in 1.2.0) is visible here.
+      const random = Buffer.alloc(320 * 1024)
+      let seed = 7
+      for (let index = 0; index < random.length; index++) {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff
+        random[index] = seed & 0xff
+      }
+      await writeFile(join(source, 'VerdantLauncher.exe'), random)
       await writeFile(join(source, 'resources', 'app.asar'), Buffer.from('asar payload'))
       await run('node', ['scripts/make-payload.mjs', source, zip])
 
@@ -113,7 +121,10 @@ describe('payload archive', () => {
       expect(progress.length).toBeGreaterThan(0)
       expect(progress.at(-1)).toBe(stats.bytes)
       expect((await readFile(join(target, 'resources', 'app.asar'), 'utf8'))).toBe('asar payload')
-      expect((await stat(join(target, 'VerdantLauncher.exe'))).size).toBe(4096)
+      const extracted = await readFile(join(target, 'VerdantLauncher.exe'))
+      expect(extracted.length).toBe(random.length)
+      expect(extracted.equals(random)).toBe(true)
+      expect(stats.bytes).toBe(random.length + 'asar payload'.length)
     } finally {
       await rm(source, { recursive: true, force: true })
       await rm(target, { recursive: true, force: true })

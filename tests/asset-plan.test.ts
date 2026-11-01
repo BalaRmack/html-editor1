@@ -103,7 +103,8 @@ describe('planMissing — resume skips what is already on disk', () => {
       ]
       const plan = await planMissing(files)
       expect(plan.present).toBe(1)
-      expect(plan.todo.map((file) => file.name)).toEqual(['wrong.jar', 'missing.jar'])
+      // sorted by path, not by the order the disk happened to answer
+      expect(plan.todo.map((file) => file.name)).toEqual(['missing.jar', 'wrong.jar'])
       expect(plan.bytes).toBe(999_999 + 5_000)
     } finally {
       await rm(dir, { recursive: true, force: true })

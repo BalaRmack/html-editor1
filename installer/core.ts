@@ -3,6 +3,8 @@ import { createWriteStream } from 'node:fs'
 import { chmod, mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { Transform, type Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import * as yauzl from 'yauzl'
 
@@ -85,45 +87,51 @@ export async function extractPayload(
     })
   })
 
+  /**
+   * One entry at a time, streamed through `pipeline`.
+   *
+   * The obvious version — `stream.on('data', …)` for the byte counter and then
+   * `stream.pipe(out)` after an `await mkdir()` — has a race that cost a real
+   * Windows build: attaching a `data` listener switches the entry stream to
+   * flowing *before* the write stream exists, so the first chunks (sometimes the
+   * whole small file) are counted and dropped. `pipeline` attaches both ends in
+   * the same tick and handles backpressure, so the file on disk is always exact.
+   */
+  const handleEntry = async (entry: yauzl.Entry): Promise<void> => {
+    const name = entry.fileName.replace(/\\/g, '/')
+    if (/\/$/.test(name)) return
+    // A zip can carry `../` — never write outside the install dir.
+    if (name.split('/').includes('..') || name.startsWith('/')) return
+
+    progress.totalFiles += 1
+    progress.totalBytes += entry.uncompressedSize
+    const target = join(destination, name)
+    const stream = await new Promise<Readable>((resolve, reject) => {
+      zip.openReadStream(entry, (error, readStream) => {
+        if (error || !readStream) reject(error ?? new Error(`Не удалось прочитать ${name}`))
+        else resolve(readStream)
+      })
+    })
+    await mkdir(dirname(target), { recursive: true })
+    const counter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        progress.bytes += chunk.length
+        onProgress?.({ ...progress })
+        callback(null, chunk)
+      }
+    })
+    await pipeline(stream, counter, createWriteStream(target))
+    progress.files += 1
+    onProgress?.({ ...progress })
+  }
+
   await new Promise<void>((resolve, reject) => {
     zip.on('error', reject)
     zip.on('end', () => resolve())
     zip.on('entry', (entry: yauzl.Entry) => {
-      const name = entry.fileName.replace(/\\/g, '/')
-      if (/\/$/.test(name)) {
-        zip.readEntry()
-        return
-      }
-      // A zip can carry `../` — never write outside the install dir.
-      if (name.split('/').includes('..') || name.startsWith('/')) {
-        zip.readEntry()
-        return
-      }
-      progress.totalFiles += 1
-      progress.totalBytes += entry.uncompressedSize
-      const target = join(destination, name)
-      zip.openReadStream(entry, (error, stream) => {
-        if (error || !stream) {
-          reject(error ?? new Error(`Не удалось прочитать ${name}`))
-          return
-        }
-        stream.on('data', (chunk: Buffer) => {
-          progress.bytes += chunk.length
-          onProgress?.({ ...progress })
-        })
-        stream.on('error', reject)
-        void (async () => {
-          await mkdir(dirname(target), { recursive: true })
-          const out = createWriteStream(target)
-          stream.pipe(out)
-          out.on('finish', () => {
-            progress.files += 1
-            onProgress?.({ ...progress })
-            zip.readEntry()
-          })
-          out.on('error', reject)
-        })()
-      })
+      void handleEntry(entry)
+        .then(() => zip.readEntry())
+        .catch(reject)
     })
     zip.readEntry()
   })
