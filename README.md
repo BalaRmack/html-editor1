@@ -6,7 +6,15 @@ offline-профиль, моды из Modrinth в один клик и конс�
 Electron 45 · React 18 · TypeScript · Vite 7 · Tailwind CSS 4 · SCSS · Zustand · Framer Motion
 Ядро запуска: `@xmcl/core` + `@xmcl/installer`.
 
+[![Download](https://img.shields.io/badge/download-Verdant--Launcher--1.0.0--Setup.exe-2fe28c?style=for-the-badge&logo=windows)](https://github.com/BalaRmack/html-editor1/releases/download/v1.0.0/Verdant-Launcher-1.0.0-Setup.exe)
+[![Release](https://img.shields.io/badge/release-v1.0.0-f5c249?style=flat-square)](https://github.com/BalaRmack/html-editor1/releases/tag/v1.0.0)
+[![CI](https://img.shields.io/github/actions/workflow/status/BalaRmack/html-editor1/ci.yml?style=flat-square&label=CI)](https://github.com/BalaRmack/html-editor1/actions/workflows/ci.yml)
+
 ![icon](build/icon.png)
+
+> **Готовый установщик:** [Verdant-Launcher-1.0.0-Setup.exe](https://github.com/BalaRmack/html-editor1/releases/download/v1.0.0/Verdant-Launcher-1.0.0-Setup.exe)
+> · страница релиза: [v1.0.0](https://github.com/BalaRmack/html-editor1/releases/tag/v1.0.0)
+> · подробный отчёт о работе: [docs/REPORT.md](docs/REPORT.md)
 
 ---
 

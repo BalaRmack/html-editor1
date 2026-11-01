@@ -170,3 +170,16 @@ React (zustand)  --invoke-->  preload (contextBridge, whitelisted API)
   реальная установка vanilla 1.21.x в temp-каталог + `Version.parse` + `generateArguments` (classpath/нативы проверяются без запуска JVM).
 - Browser-preview renderer (`npm run preview:ui`) — живой просмотр интерфейса без Electron.
 - CI: `.exe` в GitHub Release по тегу `v1.0.0`.
+
+---
+
+## 8. Итог (по факту реализации)
+
+- Название: **Verdant Launcher** (`app.verdant.launcher`), данные — `%APPDATA%\Verdant\data` (изолированно, путь меняется в настройках).
+- Языки: RU + EN, переключатель в настройках.
+- Ядро: `@xmcl/core` **2.15.1** + `@xmcl/installer` **6.0.0** — обе версии запинены, потому что
+  2.16.x / 6.3.x публикуют `workspace:^*` в зависимостях `@xmcl/unzip` и ломают `npm i`.
+- Renderer-библиотеки (React, Framer Motion, Zustand, шрифты…) перенесены в `devDependencies`:
+  они бандлятся Vite, поэтому не попадают в asar — установщик легче.
+- Дополнительно к плану: импорт модпаков `.mrpack`/CurseForge, поиск Java в реестре расширен вендорами,
+  трей при запущенной игре, CI-джоб с живыми запросами к Mojang/Fabric/Forge/NeoForge/Modrinth.
