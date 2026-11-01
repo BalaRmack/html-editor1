@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -101,9 +101,13 @@ describe('incremental integrity check', () => {
   it('re-hashes only the file that changed and reports it', async () => {
     await checkIntegrity(target(), root)
 
-    // Same size, different bytes, new mtime — exactly what a partial download or
-    // a corrupted disk sector looks like.
-    await writeFile(join(root, 'libraries', LIB_PATH), 'X'.repeat(LIB.length))
+    // Same size, different bytes, newer mtime — exactly what a partial download
+    // or a corrupted disk sector looks like. `utimes` makes the test independent
+    // of filesystem timestamp granularity (a write can land in the same ms).
+    const libPath = join(root, 'libraries', LIB_PATH)
+    await writeFile(libPath, 'X'.repeat(LIB.length))
+    const future = new Date(Date.now() + 5_000)
+    await utimes(libPath, future, future)
 
     const report = await checkIntegrity(target(), root)
     expect(report.ok).toBe(false)
@@ -114,7 +118,8 @@ describe('incremental integrity check', () => {
     expect(report.counts.skipped).toBe(2)
 
     // Repairing the file clears the issue on the next run.
-    await writeFile(join(root, 'libraries', LIB_PATH), LIB)
+    await writeFile(libPath, LIB)
+    await utimes(libPath, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000))
     const repaired = await checkIntegrity(target(), root)
     expect(repaired.ok).toBe(true)
   })
