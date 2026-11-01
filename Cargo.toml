@@ -1,0 +1,15 @@
+[package]
+name = "pinecone-launcher"
+version = "3.0.0"
+edition = "2021"
+authors = ["Pinecone Team"]
+description = "Autonomous Minecraft launcher with beautiful interface support"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = true
