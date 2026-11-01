@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'arena/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Typecheck, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (main + preload + renderer)
+        run: npm run typecheck
+
+      - name: Unit tests (uuid, maven, jvm args, png, launch args)
+        run: npm run test
+
+      - name: Renderer smoke tests (jsdom + mock backend)
+        run: npm run test:ui
+
+      - name: Build
+        run: npm run build:only
+
+  network:
+    name: Live API integration (Mojang / Fabric / Modrinth)
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Live metadata + install smoke test
+        run: npx vitest run tests/network.test.ts
+        env:
+          VERDANT_NET_TESTS: '1'

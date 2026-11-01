@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.0.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    name: Windows installer (NSIS)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Renderer smoke tests
+        run: npm run test:ui
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build renderer + main + preload
+        run: npm run build:only
+
+      - name: Build NSIS installer
+        run: npx electron-builder --win --x64 --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List artifacts
+        run: dir release
+        shell: cmd
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdant-launcher-windows
+          path: |
+            release/*.exe
+            release/*.blockmap
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: Verdant Launcher ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## Verdant Launcher ${{ github.ref_name }}
+
+            Премиальный лаунчер Minecraft: Vanilla / Fabric / Quilt / Forge / NeoForge,
+            offline-профиль, менеджер изолированных сборок, Modrinth в один клик, консоль с подсветкой.
+
+            ### Установка
+            1. Скачайте `Verdant-Launcher-*-Setup.exe` ниже.
+            2. Запустите установщик (ярлыки на Рабочем столе и в меню «Пуск» создаются автоматически).
+            3. Введите никнейм и нажмите «ИГРАТЬ».
+
+            > SmartScreen может показать предупреждение, потому что установщик не подписан
+            > сертификатом code signing. «Подробнее» → «Выполнить в любом случае».
+
+            ### Что внутри
+            - Electron 45 + React 18 + TypeScript + Vite + Tailwind CSS 4 + Zustand + Framer Motion
+            - Ядро запуска: `@xmcl/core` + `@xmcl/installer` (корректные нативы, classpath, Forge post-processors)
+            - Автоскачивание Java (Mojang JRE), поиск JDK в реестре Windows
+            - Проверка целостности файлов и докачка битых
+          files: |
+            release/*.exe
+            release/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
