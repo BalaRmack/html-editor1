@@ -58,6 +58,25 @@ jobs:
         run: dir release
         shell: cmd
 
+      - name: Verify packaged app (asar contents)
+        shell: pwsh
+        run: |
+          $list = (npx --yes @electron/asar list "release\win-unpacked\resources\app.asar") -join "`n"
+          $needles = @(
+            'out[\\/]main[\\/]index\.js',
+            'out[\\/]preload[\\/]index\.js',
+            'out[\\/]renderer[\\/]index\.html',
+            'node_modules[\\/]@xmcl[\\/]core',
+            'node_modules[\\/]@xmcl[\\/]installer',
+            'node_modules[\\/]adm-zip'
+          )
+          foreach ($needle in $needles) {
+            if ($list -notmatch $needle) { throw "Missing in asar: $needle" }
+            Write-Host "found $needle"
+          }
+          $exe = Get-Item "release\win-unpacked\VerdantLauncher.exe"
+          Write-Host ("executable: {0} ({1:N1} MB)" -f $exe.Name, ($exe.Length / 1MB))
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
