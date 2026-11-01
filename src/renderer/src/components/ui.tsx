@@ -325,6 +325,9 @@ export function Modal({
             onClick={() => closeOnBackdrop && onClose()}
           />
           <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-label={title}
             className={cn('glass relative w-full overflow-hidden rounded-3xl', width)}
             initial={{ opacity: 0, y: 18, scale: 0.985 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -352,11 +355,25 @@ export function Modal({
 
 /* -------------------------------------------------------------- tooltip */
 
-export function Tooltip({ content, children }: { content: string; children: ReactNode }): JSX.Element {
+export function Tooltip({
+  content,
+  children,
+  side = 'bottom'
+}: {
+  content: string
+  children: ReactNode
+  /** `right` is required inside the 86px sidebar, where a centred label would be clipped. */
+  side?: 'bottom' | 'right'
+}): JSX.Element {
   return (
     <span className="group relative inline-flex">
       {children}
-      <span className="pointer-events-none absolute left-1/2 top-full z-40 mt-2 -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-ink-900/95 px-2.5 py-1.5 text-[11px] text-text opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100">
+      <span
+        className={cn(
+          'pointer-events-none absolute z-40 whitespace-nowrap rounded-lg border border-white/10 bg-ink-900/95 px-2.5 py-1.5 text-[11px] text-text opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100',
+          side === 'right' ? 'left-full top-1/2 ml-2 -translate-y-1/2' : 'left-1/2 top-full mt-2 -translate-x-1/2'
+        )}
+      >
         {content}
       </span>
     </span>

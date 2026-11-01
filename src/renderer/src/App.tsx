@@ -5,6 +5,7 @@ import { Background, PageTransition, Sidebar, TitleBar, TopBar } from './compone
 import { Button, Modal, ToastHost } from './components/ui'
 import { ConsoleScreen } from './features/Console'
 import { CreateInstanceModal } from './features/CreateInstance'
+import { FeedbackModal } from './features/Feedback'
 import { InstancesScreen } from './features/Instances'
 import { ModsScreen } from './features/Mods'
 import { PlayScreen } from './features/Play'
@@ -116,6 +117,7 @@ export default function App(): JSX.Element {
       <CreateInstanceModal />
       <ProfileModal />
       <CrashModal />
+      <FeedbackModal />
       <UpdateBanner />
       <ToastHost toasts={toasts} />
     </div>

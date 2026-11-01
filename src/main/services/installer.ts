@@ -17,6 +17,7 @@ import { FORGE_MAVEN, NEOFORGE_MAVEN } from '../../shared/constants'
 import type { Instance, IntegrityReport, LoaderType } from '../../shared/types'
 import { AppError, toFailure, withStage } from './errors'
 import { checkIntegrity } from './integrity'
+import { brokenJsonReason, dropIfBrokenJson, purgeBrokenJsonIn } from './json-guard'
 import { javaService } from './java'
 import { logger } from './logger'
 import { tasks, type TaskHandle } from './tasks'
@@ -201,6 +202,46 @@ export class InstallerService {
   }
 
   /**
+   * Deletes JSON files in the shared folder that we cannot parse, so xmcl
+   * re-downloads them instead of skipping them as "already present".
+   *
+   * This is the fix for the `assets/indexes/34.json` full of NUL bytes from the
+   * real-world log: the file existed, so nothing fetched it again, and the
+   * integrity check only warned.
+   */
+  private async sanitizeShared(sharedDir: string): Promise<void> {
+    const targets = [join(sharedDir, 'assets', 'indexes'), join(sharedDir, 'versions')]
+    for (const folder of targets) {
+      const removed = await purgeBrokenJsonIn(folder, folder.endsWith('versions') ? 1 : 0)
+      for (const file of removed) {
+        logger.warn(`Повреждённый JSON удалён — будет скачан заново: ${file}`)
+      }
+    }
+  }
+
+  /**
+   * Post-install check: every `assets/indexes/*.json` and the version json of
+   * the resolved id must parse. A corrupt one is deleted and reported so the
+   * caller can retry the download instead of "succeeding" with a broken folder.
+   */
+  private async findBrokenJson(sharedDir: string, versionId: string): Promise<string[]> {
+    const candidates = [
+      ...(await purgeBrokenJsonIn(join(sharedDir, 'assets', 'indexes'), 0)).map((file) => file),
+      ...(await this.checkVersionJson(sharedDir, versionId))
+    ]
+    return candidates
+  }
+
+  private async checkVersionJson(sharedDir: string, versionId: string): Promise<string[]> {
+    const file = join(sharedDir, 'versions', versionId, `${versionId}.json`)
+    if (await dropIfBrokenJson(file)) {
+      logger.warn(`Повреждённый version.json удалён: ${file} (${await brokenJsonReason(file)})`)
+      return [file]
+    }
+    return []
+  }
+
+  /**
    * Installs everything an instance needs to launch:
    *  1. vanilla version json + client jar,
    *  2. the mod loader (Forge/NeoForge run their processors here),
@@ -217,6 +258,9 @@ export class InstallerService {
     const handle = tasks.create(`Установка «${instance.name}»`, { instanceId: instance.id, unit: 'bytes' })
 
     try {
+      handle.stage('Проверка локальных файлов', 0, 0, 'bytes', 'manifest')
+      await this.sanitizeShared(sharedDir)
+
       handle.stage('Получение манифеста Mojang', 0, 0, 'bytes', 'manifest')
       const meta = await withStage('manifest', () => this.findVersionMeta(instance.mcVersion))
       this.checkCancelled()
@@ -267,6 +311,37 @@ export class InstallerService {
       )
       this.current = null
 
+      // A corrupt index would silently break asset loading in game — verify and,
+      // if the downloader left us with garbage, force exactly one re-download.
+      const broken = await this.findBrokenJson(sharedDir, versionId)
+      if (broken.length > 0) {
+        logger.warn(`Повреждённых JSON после установки: ${broken.length} — повторная загрузка`)
+        handle.stage('Повторная загрузка повреждённых файлов', 0, 0, 'bytes', 'libraries')
+        await withStage('libraries', () =>
+          runXmclTask(
+            installDependenciesTask(resolved),
+            handle,
+            { label: 'Повторная загрузка', key: 'libraries' },
+            (task) => {
+              this.current = task as Task<unknown>
+            }
+          )
+        )
+        this.current = null
+        const stillBroken = await this.findBrokenJson(sharedDir, versionId)
+        if (stillBroken.length > 0) {
+          throw new AppError({
+            code: 'json_corrupt',
+            message: `Файлы метаданных повреждены после повторной загрузки: ${stillBroken
+              .map((file) => file.split(/[\\/]/).pop())
+              .join(', ')}`,
+            file: stillBroken[0].split(/[\\/]/).pop(),
+            stage: 'libraries',
+            retryable: true
+          })
+        }
+      }
+
       handle.done('Готово к запуску')
       logger.info(`Сборка «${instance.name}» готова (${versionId})`)
       return { versionId, loaderVersion, mcVersion: instance.mcVersion, loader: instance.loader }
@@ -283,6 +358,7 @@ export class InstallerService {
   async repair(instance: Instance, sharedDir: string): Promise<void> {
     const handle = tasks.create(`Проверка «${instance.name}»`, { instanceId: instance.id, unit: 'bytes' })
     try {
+      await this.sanitizeShared(sharedDir)
       const resolved = await withStage('libraries', () => Version.parse(sharedDir, instance.versionId))
       await withStage('libraries', () =>
         runXmclTask(

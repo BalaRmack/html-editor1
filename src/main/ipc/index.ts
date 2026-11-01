@@ -11,6 +11,8 @@ import type {
   InstallRunResult,
   InstancePatch,
   ContentInstallInput,
+  FeedbackInput,
+  Instance,
   ContentKind,
   ContentQuery,
   ContentUpdateInput,
@@ -22,6 +24,7 @@ import type {
 } from '../../shared/types'
 import { configStore } from '../services/config-store'
 import { AppError, toFailure } from '../services/errors'
+import { feedbackService } from '../services/feedback'
 import { instances } from '../services/instances'
 import { installer } from '../services/installer'
 import { javaService } from '../services/java'
@@ -391,6 +394,20 @@ export function registerIpc(): void {
   })
 
   // ---------- mods ----------
+  // ---------------------------------------------------------------- feedback
+  const selectedInstance = async (): Promise<Instance | null> => {
+    const id = configStore.get().selectedInstanceId
+    if (!id) return null
+    const list = await instances.list().catch(() => [])
+    return list.find((item) => item.id === id) ?? null
+  }
+  handle(IPC.feedback.preview, async () =>
+    feedbackService.preview(await selectedInstance(), configStore.get().settings)
+  )
+  handle(IPC.feedback.send, async (_event, input: FeedbackInput) =>
+    feedbackService.send(input, await selectedInstance(), configStore.get().settings)
+  )
+
   // ------------------------------------------------ content manager (instance window)
   handle(IPC.content.search, (_event, input: ContentQuery) => modsService.searchContent(input, configStore.get().settings))
   handle(IPC.content.install, (_event, input: ContentInstallInput) =>

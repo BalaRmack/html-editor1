@@ -1,17 +1,10 @@
 import { createHash } from 'node:crypto'
+import { validateNickname } from '../../shared/validation'
 
-export type NicknameError = 'empty' | 'too_short' | 'too_long' | 'invalid_chars'
-
-const NICK_RE = /^[A-Za-z0-9_]+$/
-
-export function validateNickname(raw: string): { ok: true; name: string } | { ok: false; error: NicknameError } {
-  const name = (raw ?? '').trim()
-  if (!name) return { ok: false, error: 'empty' }
-  if (name.length < 3) return { ok: false, error: 'too_short' }
-  if (name.length > 16) return { ok: false, error: 'too_long' }
-  if (!NICK_RE.test(name)) return { ok: false, error: 'invalid_chars' }
-  return { ok: true, name }
-}
+// One source of truth for the rules: the profile modal validates with the very
+// same function, so «Сохранить» is never offered for a name we would reject.
+export { validateNickname }
+export type { NicknameError } from '../../shared/validation'
 
 /**
  * Offline UUID, bit-for-bit identical to Java's `UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(UTF_8))`:

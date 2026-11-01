@@ -36,7 +36,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   curseForgeApiKey: '',
   autoDownloadJava: true,
   confirmOnDelete: true,
-  animations: true
+  animations: true,
+  feedbackWebhook: ''
 }
 
 export const LANGUAGES: { value: Language; label: string }[] = [

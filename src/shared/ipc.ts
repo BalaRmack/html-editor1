@@ -4,6 +4,9 @@ import type {
   CreateInstanceInput,
   GameSnapshot,
   ContentInstallInput,
+  FeedbackInput,
+  FeedbackPreview,
+  FeedbackResult,
   ContentKind,
   ContentQuery,
   ContentSearchResult,
@@ -97,6 +100,10 @@ export const IPC = {
     scan: 'java:scan',
     validate: 'java:validate',
     download: 'java:download'
+  },
+  feedback: {
+    preview: 'feedback:preview',
+    send: 'feedback:send'
   },
   content: {
     search: 'content:search',
@@ -229,6 +236,11 @@ export interface LauncherApi {
     scan(): Promise<JavaRuntime[]>
     validate(path: string): Promise<JavaRuntime | null>
     download(major: number): Promise<JavaRuntime>
+  }
+  feedback: {
+    /** System info + the last 100 log lines, shown before sending. */
+    preview(): Promise<FeedbackPreview>
+    send(input: FeedbackInput): Promise<FeedbackResult>
   }
   content: {
     search(input: ContentQuery): Promise<ContentSearchResult>

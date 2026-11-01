@@ -122,6 +122,10 @@ const api: LauncherApi = {
     validate: (path: string) => invoke<JavaRuntime | null>(IPC.java.validate, path),
     download: (major: number) => invoke<JavaRuntime>(IPC.java.download, major)
   },
+  feedback: {
+    preview: () => invoke(IPC.feedback.preview),
+    send: (input) => invoke(IPC.feedback.send, input)
+  },
   content: {
     search: (input) => invoke(IPC.content.search, input),
     install: (input) => invoke(IPC.content.install, input),

@@ -220,7 +220,11 @@ export function PlayScreen(): JSX.Element {
                         running && 'play-button--running',
                         failed && 'play-button--error'
                       )}
+                      // Locked on purpose: a failed install must never spawn the
+                      // game. The reason is already on screen (sticky toast +
+                      // error card) and `launch()` in the store re-checks it.
                       disabled={busy || downloading || verifying || failed}
+                      aria-disabled={failed}
                       title={failed ? t('play.errorHint') : undefined}
                       onClick={() => {
                         if (running || failed || verifying) return

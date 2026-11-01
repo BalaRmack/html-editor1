@@ -18,6 +18,7 @@ import { useT, type TKey } from '../i18n'
 import { api } from '../lib/api'
 import { cn } from '../lib/utils'
 import { useAppStore, type Screen } from '../store/app'
+import { FeedbackButtons } from '../features/Feedback'
 import { SkinHead } from './SkinPreview'
 
 const NAV: { screen: Screen; icon: typeof Gamepad2; key: TKey }[] = [
@@ -137,6 +138,10 @@ export function Sidebar(): JSX.Element {
             onClick={() => setScreen(item.screen)}
           />
         ))}
+        {/* very bottom: bug report + suggestion, icons only with tooltips */}
+        <div className="mt-1 w-full px-2">
+          <FeedbackButtons />
+        </div>
       </div>
     </nav>
   )

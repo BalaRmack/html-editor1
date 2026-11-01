@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import {
+  Check,
   Cpu,
   ExternalLink,
   FolderOpen,
@@ -35,9 +36,14 @@ export function SettingsScreen(): JSX.Element {
   const toastError = useAppStore((state) => state.toastError)
   const refreshInstances = useAppStore((state) => state.refreshInstances)
 
-  const [tab, setTab] = useState<Tab>('general')
+  const settingsTab = useAppStore((state) => state.settingsTab)
+  const openSettings = useAppStore((state) => state.openSettings)
+  const tab = settingsTab as Tab
+  const setTab = (next: Tab): void => openSettings(next)
+  const [checkingKey, setCheckingKey] = useState(false)
   const [jvmArgs, setJvmArgs] = useState(settings.defaultJvmArgs)
   const [cfKey, setCfKey] = useState(settings.curseForgeApiKey)
+  const [webhook, setWebhook] = useState(settings.feedbackWebhook)
   const [javaList, setJavaList] = useState<JavaRuntime[] | null>(null)
   const [scanning, setScanning] = useState(false)
   const [downloading, setDownloading] = useState<number | null>(null)
@@ -50,6 +56,25 @@ export function SettingsScreen(): JSX.Element {
 
   useEffect(() => setJvmArgs(settings.defaultJvmArgs), [settings.defaultJvmArgs])
   useEffect(() => setCfKey(settings.curseForgeApiKey), [settings.curseForgeApiKey])
+  useEffect(() => setWebhook(settings.feedbackWebhook), [settings.feedbackWebhook])
+
+  const checkCurseForgeKey = async (): Promise<void> => {
+    setCheckingKey(true)
+    try {
+      await patch({ curseForgeApiKey: cfKey.trim() })
+      await api.mods.search({ source: 'curseforge', query: 'sodium', limit: 1 })
+      pushToast({ kind: 'success', titleKey: 'settings.mods.cfOk' })
+    } catch (err) {
+      const code = (err as { code?: string }).code
+      pushToast({
+        kind: 'error',
+        titleKey: code === 'curseforge_key_required' ? 'settings.mods.cfMissing' : 'settings.mods.cfBad',
+        description: code === 'curseforge_key_required' ? undefined : (err as Error).message
+      })
+    } finally {
+      setCheckingKey(false)
+    }
+  }
 
   const scanJava = async (): Promise<void> => {
     setScanning(true)
@@ -171,6 +196,35 @@ export function SettingsScreen(): JSX.Element {
                       />
                     }
                   />
+                </div>
+              </Panel>
+
+              <Panel className="p-5">
+                <SectionTitle eyebrow="FEEDBACK" title={t('settings.feedback')} />
+                <div className="mt-3 flex flex-col gap-2">
+                  <label className="text-[12px] font-medium text-text">{t('settings.feedbackWebhook')}</label>
+                  <Input
+                    value={webhook}
+                    onChange={(event) => setWebhook(event.target.value)}
+                    placeholder="https://discord.com/api/webhooks/…"
+                  />
+                  <p className="text-[11px] leading-relaxed text-faint">{t('settings.feedbackWebhookHint')}</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={<Save className="h-4 w-4" />}
+                      onClick={async () => {
+                        await patch({ feedbackWebhook: webhook.trim() })
+                        pushToast({ kind: 'success', titleKey: 'toast.settingsSaved' })
+                      }}
+                    >
+                      {t('common.save')}
+                    </Button>
+                    <Badge tone={settings.feedbackWebhook ? 'emerald' : 'default'}>
+                      {settings.feedbackWebhook ? t('settings.mods.cfSaved') : t('settings.feedbackNotSet')}
+                    </Badge>
+                  </div>
                 </div>
               </Panel>
 
@@ -391,21 +445,54 @@ export function SettingsScreen(): JSX.Element {
                   }
                 />
               </div>
-              <div className="mt-4">
-                <label className="mb-2 block text-[12px] font-medium text-muted">{t('settings.mods.cfKey')}</label>
-                <Input value={cfKey} onChange={(event) => setCfKey(event.target.value)} placeholder="$2a$10$…" />
-                <p className="mt-2 text-[11px] text-faint">{t('settings.mods.cfHint')}</p>
-                <Button
-                  className="mt-3"
-                  variant="primary"
-                  icon={<Save className="h-4 w-4" />}
-                  onClick={async () => {
-                    await patch({ curseForgeApiKey: cfKey.trim() })
-                    pushToast({ kind: 'success', titleKey: 'toast.settingsSaved' })
-                  }}
-                >
-                  {t('common.save')}
-                </Button>
+              <div className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="block text-[12px] font-medium text-text">{t('settings.mods.cfKey')}</label>
+                  {settings.curseForgeApiKey ? (
+                    <Badge tone="emerald">
+                      <Check className="mr-1 inline h-2.5 w-2.5" />
+                      {t('settings.mods.cfSaved')}
+                    </Badge>
+                  ) : (
+                    <Badge tone="gold">{t('settings.mods.cfMissingBadge')}</Badge>
+                  )}
+                </div>
+                <Input
+                  className="mt-2"
+                  type="password"
+                  value={cfKey}
+                  onChange={(event) => setCfKey(event.target.value)}
+                  placeholder="$2a$10$…"
+                  aria-label={t('settings.mods.cfKey')}
+                />
+                <p className="mt-2 text-[11px] leading-relaxed text-faint">{t('settings.mods.cfHint')}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="primary"
+                    icon={<Save className="h-4 w-4" />}
+                    disabled={!cfKey.trim()}
+                    onClick={async () => {
+                      await patch({ curseForgeApiKey: cfKey.trim() })
+                      pushToast({ kind: 'success', titleKey: 'toast.settingsSaved' })
+                    }}
+                  >
+                    {t('common.save')}
+                  </Button>
+                  <Button loading={checkingKey} icon={<RefreshCw className="h-4 w-4" />} onClick={() => void checkCurseForgeKey()}>
+                    {t('settings.mods.cfTest')}
+                  </Button>
+                  <a
+                    className="flex items-center gap-1 text-[11px] text-emerald-soft hover:underline"
+                    href="#"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      void api.app.openExternal('https://console.curseforge.com/#/api-keys')
+                    }}
+                  >
+                    {t('settings.mods.cfGet')}
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
               </div>
             </Panel>
           ) : null}

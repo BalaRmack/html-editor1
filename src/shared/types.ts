@@ -91,6 +91,8 @@ export interface AppSettings {
   autoDownloadJava: boolean
   confirmOnDelete: boolean
   animations: boolean
+  /** Сюда уходят отчёты об ошибках и предложения (Discord/Slack/вебхук). */
+  feedbackWebhook: string
 }
 
 export interface JavaRuntime {
@@ -442,3 +444,48 @@ export interface UpdateState {
   /** Version the user asked never to be offered again. */
   skippedVersion: string | null
 }
+
+/* ------------------------------------------------------------------ feedback */
+
+export type FeedbackKind = 'bug' | 'suggestion'
+
+/** Everything we collect automatically — shown to the user before sending. */
+export interface FeedbackSystemInfo {
+  os: string
+  arch: string
+  appVersion: string
+  electron: string
+  /** First usable Java runtime, e.g. `Java 21 · C:\Program Files\…\javaw.exe`. */
+  java: string | null
+  totalMemMB: number
+  locale: string
+  /** Selected instance, when the launcher knows one. */
+  instance: string | null
+}
+
+export interface FeedbackInput {
+  kind: FeedbackKind
+  description: string
+  /** Optional Discord/Telegram handle — suggestions only. */
+  contact?: string
+}
+
+/** What the modal shows before the user presses «Отправить». */
+export interface FeedbackPreview {
+  systemInfo: FeedbackSystemInfo
+  /** Last 100 lines of `launcher.log` (never empty: a placeholder is included). */
+  logLines: string[]
+  logFile: string | null
+  /** `true` when a webhook or GitHub token is configured. */
+  configured: boolean
+}
+
+export interface FeedbackResult {
+  ok: boolean
+  delivered: 'webhook' | 'github' | 'none'
+  /** `feedback_not_configured`, `feedback_too_short`, `feedback_rate_limited`, … */
+  code?: string
+  message?: string
+  logLines: number
+}
+

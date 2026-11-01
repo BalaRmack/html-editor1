@@ -3,6 +3,7 @@ import {
   Download,
   ExternalLink,
   FolderOpen,
+  KeyRound,
   Package,
   Power,
   Search,
@@ -101,6 +102,7 @@ export function ModsScreen(): JSX.Element {
   const toastError = useAppStore((state) => state.toastError)
   const refreshInstances = useAppStore((state) => state.refreshInstances)
   const setScreen = useAppStore((state) => state.setScreen)
+  const openSettings = useAppStore((state) => state.openSettings)
   const openCreate = useAppStore((state) => state.openCreate)
 
   const instance = instances.find((item) => item.id === selectedId) ?? null
@@ -331,8 +333,13 @@ export function ModsScreen(): JSX.Element {
               <div className="text-[13px] font-medium text-text">{t('settings.mods.cfKey')}</div>
               <p className="mt-1 text-[11.5px] text-muted">{t('mods.curseKeyHint')}</p>
             </div>
-            <Button size="sm" onClick={() => setScreen('settings')}>
-              {t('nav.settings')}
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<KeyRound className="h-3.5 w-3.5" />}
+              onClick={() => openSettings('mods')}
+            >
+              {t('mods.curseKeyAdd')}
             </Button>
           </div>
         </Panel>

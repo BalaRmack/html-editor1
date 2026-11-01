@@ -42,6 +42,37 @@ function makeInstance(id: string, name: string, mcVersion: string, loader: Insta
   }
 }
 
+
+/** Deterministic ~140-line launch log so the 100-line attachment is visible. */
+function mockLogTail(): string[] {
+  const lines: string[] = []
+  const push = (ts: string, level: string, text: string): void => {
+    lines.push(`2026-11-01T08:${ts}Z [${level}] [launcher] ${text}`)
+  }
+  push('08:52.265', 'INFO', 'Verdant Launcher 1.1.0 — старт')
+  push('08:52.402', 'INFO', 'Платформа: Windows 11 10.0.22631 (x64), Electron 45.2.1')
+  push('08:52.611', 'INFO', 'Каталог данных: C:\\Users\\Player\\AppData\\Roaming\\Verdant')
+  push('08:52.780', 'INFO', 'Java 21 (21.0.5) найдена: C:\\Program Files\\Java\\jdk-21\\bin\\javaw.exe')
+  for (let i = 0; i < 118; i += 1) {
+    const sec = String(53 + Math.floor(i / 20)).padStart(2, '0')
+    const ms = String((i * 37) % 1000).padStart(3, '0')
+    const name = `assets/objects/${(i * 7919).toString(16).padStart(2, '0')}/${(i * 104729).toString(16)}`
+    push(`${sec}:${ms}`, 'INFO', `Проверка ${name} — OK (${(0.4 + (i % 17) * 0.9).toFixed(1)} МБ)`)
+  }
+  push(
+    '09:01.599',
+    'WARN',
+    "Не удалось прочитать индекс ассетов 34: Unexpected token '\\u0000' — файл удалён, будет скачан заново"
+  )
+  push('09:01.640', 'INFO', 'Загрузка индекса ассетов 34 (assets-index-34.json)')
+  push('09:07.404', 'INFO', 'Установка fabric 0.20.1 для Minecraft 1.21.4')
+  push('09:09.118', 'WARN', 'Повторная попытка 1/3 для client-1.21.4.jar')
+  push('09:11.906', 'WARN', 'Повторная попытка 2/3 для client-1.21.4.jar')
+  push('09:17.306', 'ERROR', 'Установка «вцф» прервана: [network_error] Headers Timeout Error (C:\\Users\\Player\\AppData\\Roaming\\Verdant\\assets\\indexes\\34.json)')
+  push('09:17.480', 'ERROR', 'AggregateError: fetch failed / Connect Timeout Error (10000ms)')
+  return lines.slice(-100)
+}
+
 const instances: Instance[] = [
   makeInstance('a1', 'Выживание 1.21.4', '1.21.4', 'fabric', 14),
   makeInstance('a2', 'Create: Above & Beyond', '1.20.1', 'forge', 87),
@@ -974,6 +1005,31 @@ export function createMockApi(): LauncherApi {
           arch: 'amd64',
           source: 'mojang'
         }
+      }
+    },
+    feedback: {
+      preview: async () => {
+        await sleep(180)
+        return {
+          systemInfo: {
+            os: 'Windows 11 10.0.22631',
+            arch: 'x64',
+            appVersion: APP_VERSION,
+            electron: '45.2.1',
+            java: 'Java 21 (21.0.5) · C:\\Program Files\\Java\\jdk-21\\bin\\javaw.exe',
+            totalMemMB: 16384,
+            locale: 'ru-RU',
+            instance: instances[0]?.name ?? null
+          },
+          // A real session is a few hundred lines; the service keeps the last 100.
+          logLines: mockLogTail(),
+          logFile: 'C:\\Users\\Player\\AppData\\Roaming\\Verdant\\logs\\launcher.log',
+          configured: true
+        }
+      },
+      send: async (input) => {
+        await sleep(700)
+        return { ok: true, delivered: 'webhook', logLines: 100, code: undefined, message: undefined }
       }
     },
     content: {

@@ -31,6 +31,7 @@ export function normalizeSettings(raw: unknown, fallbackDataRoot: string): AppSe
     },
     defaultJvmArgs: typeof input.defaultJvmArgs === 'string' ? input.defaultJvmArgs : '',
     curseForgeApiKey: typeof input.curseForgeApiKey === 'string' ? input.curseForgeApiKey : '',
+    feedbackWebhook: typeof input.feedbackWebhook === 'string' ? input.feedbackWebhook.trim() : '',
     modSource: input.modSource === 'curseforge' ? 'curseforge' : 'modrinth',
     afterLaunch: input.afterLaunch === 'minimize' || input.afterLaunch === 'close' ? input.afterLaunch : 'stay'
   }

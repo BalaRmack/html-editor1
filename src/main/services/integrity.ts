@@ -209,8 +209,12 @@ export async function checkIntegrity(
           }
         })
       } catch (error) {
+        // Corrupt index = missing index: the installer deletes and re-downloads it.
         push({ kind: 'assetIndex', name: `${indexId}.json`, path: indexPath })
-        logger.warn(`Не удалось прочитать индекс ассетов ${indexId}: ${(error as Error).message}`)
+        logger.warn(
+          `Индекс ассетов ${indexId} повреждён (${(error as Error).message.slice(0, 100)}) — ` +
+            'будет скачан заново при повторе загрузки'
+        )
       }
     }
   }

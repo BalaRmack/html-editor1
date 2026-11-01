@@ -5,6 +5,7 @@ import type {
   CrashInfo,
   GameSnapshot,
   InstallRunResult,
+  FeedbackKind,
   Instance,
   InstancePatch,
   IntegrityReport,
@@ -46,6 +47,9 @@ export type IntegrityState =
   | { status: 'missing'; report?: IntegrityReport }
   | { status: 'error'; code: string; message?: string; file?: string; report?: IntegrityReport }
 
+/** Settings sections that other screens can deep-link into. */
+export type SettingsTab = 'general' | 'java' | 'memory' | 'jvm' | 'mods' | 'about'
+
 interface AppStore {
   ready: boolean
   settings: AppSettings
@@ -72,6 +76,13 @@ interface AppStore {
 
   init: () => Promise<void>
   setScreen: (screen: Screen) => void
+  /** Which settings tab to open; screens deep-link here (e.g. CurseForge key). */
+  settingsTab: SettingsTab
+  openSettings: (tab?: SettingsTab) => void
+  /** Open feedback modal for a kind; `null` closes it. */
+  feedbackKind: FeedbackKind | null
+  openFeedback: (kind: FeedbackKind) => void
+  closeFeedback: () => void
   setSelected: (id: string | null) => void
   refreshInstances: () => Promise<Instance[]>
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>
@@ -120,6 +131,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   systemInfo: null,
 
   screen: 'play',
+  settingsTab: 'general',
+  feedbackKind: null,
   logs: [],
   task: null,
   game: { state: 'idle', instanceId: null, startedAt: null, exitCode: null, crashReportLocation: null },
@@ -208,6 +221,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setScreen: (screen) => set({ screen }),
+  openSettings: (tab) => set({ screen: 'settings', settingsTab: tab ?? 'general' }),
+  openFeedback: (kind) => set({ feedbackKind: kind }),
+  closeFeedback: () => set({ feedbackKind: null }),
   setSelected: (id) => set({ selectedId: id }),
 
   async refreshInstances() {
@@ -427,6 +443,27 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return
     }
     if (target !== state.selectedId) set({ selectedId: target })
+
+    // Hard gate: never spawn the client on unverified files. A failed install
+    // leaves the instance at `status: 'error'`, and pressing «Играть» right after
+    // (the bug from launcher.log) must explain itself instead of launching.
+    const known = get().integrity[target]
+    if (!known || known.status !== 'ok') {
+      const current = known && known.status !== 'checking' ? known : await get().checkIntegrity(target)
+      if (current.status !== 'ok') {
+        const code = current.status === 'error' ? current.code : 'not_installed'
+        get().pushToast({
+          kind: 'error',
+          titleKey: 'toast.notReady',
+          errorCode: code,
+          description: current.status === 'error' ? current.message : undefined,
+          sticky: true,
+          action: { labelKey: 'common.retry', icon: 'retry', run: () => void get().retryInstall(target) }
+        })
+        return
+      }
+    }
+
     try {
       await api.game.launch(target)
       const settings = get().settings

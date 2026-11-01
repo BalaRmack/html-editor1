@@ -19,6 +19,7 @@ export type ErrorCode =
   | 'cancelled'
   | 'disk_error'
   | 'install_failed'
+  | 'json_corrupt'
 
 export interface FailureShape {
   code: string
@@ -55,8 +56,12 @@ export function toFailure(error: unknown, stage?: string): FailureShape {
     }
   }
 
-  const err = error as (Error & { code?: string; url?: string }) | undefined
-  const message = err?.message ? String(err.message) : String(error)
+  const err = error as (Error & { code?: string; url?: string; errors?: unknown[] }) | undefined
+  // AggregateError / bare rejections surface with an empty message — dig one
+  // level deeper so the user never sees «Установка не удалась: » with nothing.
+  const nested = Array.isArray(err?.errors) ? err?.errors.find((item) => (item as Error)?.message) : undefined
+  const raw = err?.message ? String(err.message) : nested ? String((nested as Error).message) : String(error ?? '')
+  const message = raw.trim()
   const code = err?.code
 
   // Cancellation is a user action, never an error the user should retry.
@@ -73,7 +78,7 @@ export function toFailure(error: unknown, stage?: string): FailureShape {
   }
 
   const networkLike =
-    /ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|ESOCKETTIMEDOUT|socket hang up|getaddrinfo|premature close|aborted|network|fetch failed|fail to (download|fetch)|failed to (download|fetch)|status code 5\d\d|status code 429/i.test(
+    /ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|ESOCKETTIMEDOUT|UND_ERR|headers timeout|body timeout|connect timeout|socket hang up|getaddrinfo|premature close|aborted|aggregateerror|other side closed|network|fetch failed|fail to (download|fetch)|failed to (download|fetch)|status code 5\d\d|status code 429/i.test(
       message
     )
 
@@ -88,7 +93,15 @@ export function toFailure(error: unknown, stage?: string): FailureShape {
     }
   }
 
-  return { code: 'install_failed', message, stage, retryable: true }
+  // Unknown failure: keep a readable sentence, but never an empty string.
+  const friendly = message && !/^(aggregate)?error$/i.test(message) ? message : 'Не удалось завершить установку'
+  return {
+    code: 'install_failed',
+    message: /timeout|timed out/i.test(message) ? `Сервер не ответил вовремя${url ? ` (${fileNameFromUrl(url)})` : ''}` : friendly,
+    file: url ? fileNameFromUrl(url) : undefined,
+    stage,
+    retryable: true
+  }
 }
 
 const URL_RE = /https?:\/\/[^\s"'<>)\]]+/i
