@@ -89,6 +89,13 @@ export class ModsService {
     return source === 'curseforge' ? curseforgeProject(id, settings.curseForgeApiKey) : modrinthProject(id)
   }
 
+  /** Versions of a modpack (no instance context exists yet, so no loader filter). */
+  async packVersions(source: ModQuery['source'], projectId: string, mcVersion: string | null, settings: AppSettings) {
+    return source === 'curseforge'
+      ? curseforgePackVersions(projectId, mcVersion, settings.curseForgeApiKey)
+      : modrinthVersionsForPack(projectId, mcVersion)
+  }
+
   async versions(
     source: ModQuery['source'],
     projectId: string,
@@ -282,15 +289,16 @@ export class ModsService {
       const version = input.versionId ? versions.find((entry) => entry.id === input.versionId) ?? versions[0] : versions[0]
 
       const archive = join(tempDir, basename(version.fileName) || 'pack.zip')
-      task.stage('Скачивание архива', 0, 1)
-      await downloadFile(version.downloadUrl, archive)
-      task.bump()
+      task.stage('Скачивание архива', 0, version.fileSize || 0, 'bytes', 'packDownload')
+      await downloadFile(version.downloadUrl, archive, (received, total) => {
+        task.stage('Скачивание архива', received, total || version.fileSize || 0, 'bytes', 'packDownload')
+      })
 
       const zip = new AdmZip(archive)
       await mkdir(tempDir, { recursive: true })
       zip.extractAllTo(tempDir, true)
 
-      let index: { name: string; mcVersion: string; loader: LoaderType; loaderVersion: string | null; files: { path: string; downloadUrl: string; client: string }[]; overridesDir: string; curseFiles?: { projectId: string; fileId: string; required: boolean }[] }
+      let index: { name: string; mcVersion: string; loader: LoaderType; loaderVersion: string | null; files: { path: string; downloadUrl: string; fileSize: number; client: string }[]; overridesDir: string; curseFiles?: { projectId: string; fileId: string; required: boolean }[] }
 
       if (input.source === 'modrinth') {
         const raw = JSON.parse(await readFile(join(tempDir, 'modrinth.index.json'), 'utf8'))
@@ -344,28 +352,36 @@ export class ModsService {
         { memory: settings.defaultMemory, jvmArgs: settings.defaultJvmArgs }
       )
 
-      task.stage('Установка загрузчика', 0, 0)
+      task.stage('Установка загрузчика', 0, 0, 'steps', 'loader')
       const outcome = await installer.installInstance(created, paths.get().sharedDir, settings.javaPath)
       await instances.setVersionInfo(created.id, outcome.versionId, outcome.loaderVersion, outcome.mcVersion)
 
       const gameDir = created.gameDir
       if (input.source === 'modrinth') {
-        task.stage('Скачивание файлов сборки', 0, index.files.length)
+        const plannedBytes = index.files.reduce((sum, file) => sum + (file.fileSize || 0), 0)
+        let doneBytes = 0
+        task.stage('Файлы сборки', 0, plannedBytes, 'bytes', 'packFiles')
         for (const file of index.files) {
           const target = safeJoin(gameDir, file.path)
           await mkdir(resolve(target, '..'), { recursive: true })
-          await downloadFile(file.downloadUrl, target)
-          task.bump()
+          await downloadFile(file.downloadUrl, target, (received, total) => {
+            task.stage('Файлы сборки', doneBytes + received, plannedBytes || doneBytes + (total || file.fileSize || 0), 'bytes', 'packFiles')
+          })
+          doneBytes += file.fileSize || 0
+          task.stage('Файлы сборки', doneBytes, plannedBytes, 'bytes', 'packFiles')
         }
       } else if (index.curseFiles) {
-        task.stage('Скачивание модов CurseForge', 0, index.curseFiles.length)
+        task.stage('Скачивание модов CurseForge', 0, index.curseFiles.length, 'files', 'packFiles')
         const manifest: Manifest = { mods: {} }
+        let fetched = 0
         for (const file of index.curseFiles) {
           const matching = await curseforgeFile(file.projectId, file.fileId, settings.curseForgeApiKey).catch(() => null)
           if (!matching) continue
           const target = join(gameDir, 'mods', basename(matching.fileName))
           await mkdir(join(gameDir, 'mods'), { recursive: true })
           await downloadFile(matching.downloadUrl, target)
+          fetched += 1
+          task.stage('Скачивание модов CurseForge', fetched, index.curseFiles.length, 'files', 'packFiles')
           manifest.mods[file.projectId] = {
             projectId: file.projectId,
             fileName: basename(matching.fileName),
@@ -375,14 +391,13 @@ export class ModsService {
             source: 'curseforge',
             installedAt: new Date().toISOString()
           }
-          task.bump()
         }
         await this.writeManifest(created.id, manifest)
       }
 
       const overrides = join(tempDir, index.overridesDir)
       if (existsSync(overrides)) {
-        task.stage('Применение overrides', 0, 0)
+        task.stage('Применение overrides', 0, 0, 'steps', 'overrides')
         await cp(overrides, gameDir, { recursive: true, force: true })
       }
 

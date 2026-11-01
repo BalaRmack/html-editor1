@@ -101,7 +101,7 @@ export function ModsScreen(): JSX.Element {
   const toastError = useAppStore((state) => state.toastError)
   const refreshInstances = useAppStore((state) => state.refreshInstances)
   const setScreen = useAppStore((state) => state.setScreen)
-  const setWizardOpen = useAppStore((state) => state.setWizardOpen)
+  const openCreate = useAppStore((state) => state.openCreate)
 
   const instance = instances.find((item) => item.id === selectedId) ?? null
   const loader: LoaderType = instance?.loader ?? 'fabric'
@@ -251,7 +251,7 @@ export function ModsScreen(): JSX.Element {
               className="w-[240px]"
             />
             {instances.length === 0 ? (
-              <Button variant="primary" icon={<Package className="h-4 w-4" />} onClick={() => setWizardOpen(true)}>
+              <Button variant="primary" icon={<Package className="h-4 w-4" />} onClick={() => openCreate()}>
                 {t('instances.create')}
               </Button>
             ) : null}
@@ -317,7 +317,7 @@ export function ModsScreen(): JSX.Element {
         <div className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/[0.07] px-4 py-3 text-[12px] text-amber-100">
           <TriangleAlert className="mt-0.5 h-4 w-4 flex-none text-amber-300" />
           <div className="flex-1">{t('mods.vanillaWarning')}</div>
-          <button className="text-[11px] font-medium text-amber-200 underline" onClick={() => setWizardOpen(true)}>
+          <button className="text-[11px] font-medium text-amber-200 underline" onClick={() => openCreate()}>
             {t('instances.create')}
           </button>
         </div>

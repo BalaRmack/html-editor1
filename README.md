@@ -62,6 +62,23 @@ VERDANT_NET_TESTS=1 npx vitest run tests/network.test.ts
   и свой `instance.json` (версия, загрузчик, RAM, JVM-аргументы, Java, заметки).
 - Общий кеш `shared/{versions,libraries,assets}` — как в Prism/Modrinth App, экономит гигабайты.
 - Создание, клонирование (включая моды и миры), переименование, удаление, кастомная иконка.
+- **Модальное окно «Новая сборка»** с двумя вкладками:
+  - *Версии* — список версий из официального манифеста Mojang (фильтры «Релизы / Снапшоты / Все» + поиск),
+    карточки загрузчиков (Vanilla, Fabric, Quilt, Forge, NeoForge) с выбором версии загрузчика,
+    имя сборки, ОЗУ и Java прямо в окне.
+  - *Модпаки* — поиск по Modrinth и CurseForge, карточка сборки, список версий,
+    «Установить как сборку»: архив скачивается, манифест определяет Minecraft и загрузчик,
+    файлы раскладываются по папкам сборки, оверрайды копируются, загрузчик ставится автоматически.
+- Живой прогресс: кольцо с общим процентом, чек-лист этапов (файлы игры → загрузчик → библиотеки,
+  либо архив → моды → конфиги), байты «скачано / всего» и кнопка отмены задачи.
+
+| Версии | Модпаки |
+| --- | --- |
+| ![Вкладка «Версии»](docs/screens/create-versions.png) | ![Вкладка «Модпаки»](docs/screens/create-modpacks.png) |
+
+| Прогресс установки | Готово |
+| --- | --- |
+| ![Прогресс](docs/screens/create-progress.png) | ![Готово](docs/screens/create-done.png) |
 
 ### Запуск игры
 - Vanilla, Fabric, Quilt, Forge, NeoForge (`@xmcl/installer`; Forge post-processors выполняются).
@@ -103,7 +120,7 @@ src/
    ├─ i18n/      RU + EN словари
    ├─ store/     Zustand (профиль, сборки, настройки, логи, задачи, тосты)
    ├─ components/  glass-примитивы, layout (титлбар/сайдбар/топбар), SkinPreview
-   └─ features/  play · instances · wizard · mods · skins · settings · console
+   └─ features/  play · instances · CreateInstance (модалка) · mods · skins · settings · console
 ```
 
 Безопасность: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: false` (preload требует

@@ -121,6 +121,8 @@ const api: LauncherApi = {
     project: (source: ModQuery['source'], id: string) => invoke<ModHit | null>(IPC.mods.project, source, id),
     versions: (source: ModQuery['source'], projectId: string, mcVersion: string, loader: LoaderType) =>
       invoke<ModVersion[]>(IPC.mods.versions, source, projectId, mcVersion, loader),
+    packVersions: (source: ModQuery['source'], projectId: string, mcVersion?: string | null) =>
+      invoke<ModVersion[]>(IPC.mods.packVersions, source, projectId, mcVersion ?? null),
     install: (input: ModInstallInput) => invoke<ModInstallResult>(IPC.mods.install, input),
     installed: (instanceId: string) => invoke<InstalledMod[]>(IPC.mods.installed, instanceId),
     remove: (instanceId: string, fileName: string) => invoke<void>(IPC.mods.remove, instanceId, fileName),

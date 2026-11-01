@@ -7,6 +7,7 @@ import type {
   Instance,
   InstancePatch,
   LogLine,
+  ModpackInstallInput,
   OfflineProfile,
   SkinInfo,
   SystemInfo,
@@ -16,6 +17,7 @@ import { api } from '../lib/api'
 import { extractCode } from '../lib/utils'
 
 export type Screen = 'play' | 'instances' | 'mods' | 'skins' | 'settings' | 'console'
+export type CreateTab = 'versions' | 'modpacks'
 
 export interface ToastItem {
   id: number
@@ -42,7 +44,8 @@ interface AppStore {
   crash: CrashInfo | null
 
   profileModalOpen: boolean
-  wizardOpen: boolean
+  createOpen: boolean
+  createTab: CreateTab
   toasts: ToastItem[]
 
   init: () => Promise<void>
@@ -55,12 +58,15 @@ interface AppStore {
   refreshSkin: () => Promise<void>
   removeSkin: () => Promise<void>
   openProfileModal: (open: boolean) => void
-  setWizardOpen: (open: boolean) => void
+  openCreate: (tab?: CreateTab) => void
+  closeCreate: () => void
+  setCreateTab: (tab: CreateTab) => void
   pushToast: (toast: Omit<ToastItem, 'id'>) => void
   dismissToast: (id: number) => void
   toastError: (error: unknown, titleKey?: string) => void
   createInstance: (input: Parameters<typeof api.instances.create>[0]) => Promise<Instance>
   installInstance: (id: string) => Promise<boolean>
+  installModpack: (input: ModpackInstallInput) => Promise<Instance>
   launch: (id?: string) => Promise<void>
   stopGame: () => void
   removeInstance: (id: string) => Promise<void>
@@ -91,7 +97,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   crash: null,
 
   profileModalOpen: false,
-  wizardOpen: false,
+  createOpen: false,
+  createTab: 'versions',
   toasts: [],
 
   async init() {
@@ -197,7 +204,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   openProfileModal: (open) => set({ profileModalOpen: open }),
-  setWizardOpen: (open) => set({ wizardOpen: open }),
+  openCreate: (tab) => set({ createOpen: true, createTab: tab ?? 'versions' }),
+  closeCreate: () => set({ createOpen: false }),
+  setCreateTab: (tab) => set({ createTab: tab }),
 
   pushToast: (toast) => {
     const id = ++toastSeq
@@ -215,6 +224,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   async createInstance(input) {
     const instance = await api.instances.create(input)
+    await get().refreshInstances()
+    set({ selectedId: instance.id })
+    return instance
+  },
+
+  async installModpack(input) {
+    const instance = await api.mods.installPack(input)
     await get().refreshInstances()
     set({ selectedId: instance.id })
     return instance
@@ -238,7 +254,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (state.game.state === 'running' || state.game.state === 'starting') return
     const target = id ?? state.selectedId ?? state.instances[0]?.id
     if (!target) {
-      state.setWizardOpen(true)
+      state.openCreate()
       return
     }
     if (!state.profile) {

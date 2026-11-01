@@ -3,7 +3,7 @@ import { ChevronDown, Cpu, HardDrive, Layers, Package, Play, Plus, Square, Termi
 import { useState } from 'react'
 import { formatDuration } from '../../../shared/constants'
 import { LOADER_LABELS, type Instance } from '../../../shared/types'
-import { useT } from '../i18n'
+import { pluralCount, useT } from '../i18n'
 import { cn, formatGb, instanceGradient, relativeTime } from '../lib/utils'
 import { useAppStore } from '../store/app'
 import { ScreenHeader } from '../components/layout'
@@ -53,7 +53,7 @@ export function PlayScreen(): JSX.Element {
   const launch = useAppStore((state) => state.launch)
   const stopGame = useAppStore((state) => state.stopGame)
   const installInstance = useAppStore((state) => state.installInstance)
-  const setWizardOpen = useAppStore((state) => state.setWizardOpen)
+  const openCreate = useAppStore((state) => state.openCreate)
   const openProfileModal = useAppStore((state) => state.openProfileModal)
   const setScreen = useAppStore((state) => state.setScreen)
 
@@ -156,7 +156,7 @@ export function PlayScreen(): JSX.Element {
                               className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-[12px] text-emerald-soft transition hover:bg-emerald/10"
                               onClick={() => {
                                 setMenuOpen(false)
-                                setWizardOpen(true)
+                                openCreate()
                               }}
                             >
                               <Plus className="h-4 w-4" /> {t('instances.create')}
@@ -226,7 +226,7 @@ export function PlayScreen(): JSX.Element {
                   </span>
                   <span className="flex items-center gap-1.5 rounded-lg bg-black/25 px-2.5 py-1.5 backdrop-blur">
                     <Package className="h-3.5 w-3.5 text-emerald-soft" />
-                    {instance.modsCount} {t('play.mods').toLowerCase()}
+                    {pluralCount(t, instance.modsCount, 'mod')}
                   </span>
                   <span className="flex items-center gap-1.5 rounded-lg bg-black/25 px-2.5 py-1.5 backdrop-blur">
                     <HardDrive className="h-3.5 w-3.5 text-emerald-soft" />
@@ -244,7 +244,7 @@ export function PlayScreen(): JSX.Element {
                 title={t('play.noInstances')}
                 description={t('play.noInstancesHint')}
                 action={
-                  <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setWizardOpen(true)}>
+                  <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => openCreate()}>
                     {t('play.create')}
                   </Button>
                 }

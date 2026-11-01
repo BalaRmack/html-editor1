@@ -4,13 +4,15 @@ import { join } from 'node:path'
 import { MinecraftFolder, Version } from '@xmcl/core'
 import {
   getVersionList,
-  install,
-  installDependencies,
+  installDependenciesTask,
   installFabric,
   installForge,
   installNeoForged,
-  installQuiltVersion
+  installQuiltVersion,
+  installVersionTask,
+  type MinecraftVersion
 } from '@xmcl/installer'
+import { createFork, type Task } from '@xmcl/task'
 import { FORGE_MAVEN, NEOFORGE_MAVEN } from '../../shared/constants'
 import type { Instance, LoaderType } from '../../shared/types'
 import { javaService } from './java'
@@ -54,11 +56,42 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
+/**
+ * Runs an `@xmcl/task` tree and mirrors its aggregated byte progress into our own
+ * task bus. The xmcl task graph sums `progress`/`total` of every child download,
+ * so the UI gets a real progress bar instead of a "spinning forever" step.
+ */
+export async function runXmclTask<T>(
+  root: Task<T>,
+  handle: TaskHandle,
+  stage: { label: string; key: string },
+  onStart?: (task: Task<T>) => void
+): Promise<T> {
+  let lastReported = -1
+  const timer = setInterval(() => {
+    const total = root.total
+    const progress = root.progress
+    if (total > 0 && progress >= 0 && progress !== lastReported) {
+      lastReported = progress
+      handle.stage(stage.label, Math.min(progress, total), total, 'bytes', stage.key)
+    }
+  }, 250)
+
+  onStart?.(root)
+  try {
+    return await root.startAndWait({ fork: createFork() })
+  } finally {
+    clearInterval(timer)
+  }
+}
+
 export class InstallerService {
   private cancelled = false
+  private current: Task<unknown> | null = null
 
   cancel(): void {
     this.cancelled = true
+    void this.current?.cancel?.().catch(() => undefined)
   }
 
   private checkCancelled(): void {
@@ -77,7 +110,7 @@ export class InstallerService {
     return requiredJavaMajor(mcVersion)
   }
 
-  async ensureVanilla(mcVersion: string, sharedDir: string, task?: TaskHandle): Promise<void> {
+  async findVersionMeta(mcVersion: string): Promise<MinecraftVersion> {
     const list = await getVersionList()
     const meta = list.versions.find((entry) => entry.id === mcVersion)
     if (!meta) {
@@ -85,11 +118,7 @@ export class InstallerService {
       ;(error as Error & { code?: string }).code = 'version_not_found'
       throw error
     }
-    task?.stage('Проверка версии', 0, 3)
-    logger.info(`Установка Minecraft ${mcVersion}`)
-    await install(meta, sharedDir)
-    task?.bump()
-    this.checkCancelled()
+    return meta
   }
 
   private async installLoader(
@@ -164,6 +193,13 @@ export class InstallerService {
     }
   }
 
+  /**
+   * Installs everything an instance needs to launch:
+   *  1. vanilla version json + client jar,
+   *  2. the mod loader (Forge/NeoForge run their processors here),
+   *  3. every library and asset for the resolved version.
+   * Progress is reported in bytes so the UI can render a real progress bar.
+   */
   async installInstance(
     instance: Instance,
     sharedDir: string,
@@ -171,54 +207,86 @@ export class InstallerService {
     options: { verifyOnly?: boolean } = {}
   ): Promise<InstallOutcome> {
     this.cancelled = false
-    const task = tasks.create(`Установка «${instance.name}»`, { instanceId: instance.id, total: 5, unit: 'steps' })
-    try {
-      task.stage('Проверка версии', 0, 5)
-      if (!options.verifyOnly) {
-        await this.ensureVanilla(instance.mcVersion, sharedDir, task)
-      }
+    const handle = tasks.create(`Установка «${instance.name}»`, { instanceId: instance.id, unit: 'bytes' })
 
+    try {
+      handle.stage('Получение манифеста Mojang', 0, 0, 'bytes', 'manifest')
+      const meta = await this.findVersionMeta(instance.mcVersion)
       this.checkCancelled()
-      task.stage(`Установка ${instance.loader}`, 2, 5)
+
+      handle.stage(`Версия Minecraft ${instance.mcVersion}`, 0, 0, 'bytes', 'version')
+      await runXmclTask(
+        installVersionTask(meta, sharedDir),
+        handle,
+        { label: `Версия Minecraft ${instance.mcVersion}`, key: 'version' },
+        (task) => {
+          this.current = task as Task<unknown>
+        }
+      )
+      this.checkCancelled()
+
       let versionId = instance.versionId
       let loaderVersion = instance.loaderVersion
-      if (!options.verifyOnly || !(await exists(join(sharedDir, 'versions', versionId, `${versionId}.json`)))) {
-        const loaderResult = await this.installLoader(
+      const loaderJson = join(sharedDir, 'versions', instance.versionId, `${instance.versionId}.json`)
+      const loaderReady =
+        instance.loader === 'vanilla' ||
+        (instance.versionId !== instance.mcVersion && (await exists(loaderJson)))
+      // A freshly created instance points at the vanilla id, so the loader is installed here.
+      // Re-running install (verify/repair) only reinstalls it if its version json disappeared.
+      const needsLoader = !loaderReady
+
+      if (needsLoader) {
+        handle.stage(`Установка ${instance.loader}`, 0, 0, 'steps', 'loader')
+        const result = await this.installLoader(
           instance.mcVersion,
           instance.loader,
           instance.loaderVersion,
           sharedDir,
           javaPath
         )
-        versionId = loaderResult.versionId
-        loaderVersion = loaderResult.loaderVersion
+        versionId = result.versionId
+        loaderVersion = result.loaderVersion
+        this.checkCancelled()
       }
 
-      this.checkCancelled()
-      task.stage('Проверка библиотек и ассетов', 3, 5)
       const resolved = await Version.parse(sharedDir, versionId)
-      await installDependencies(resolved, {})
+      await runXmclTask(
+        installDependenciesTask(resolved),
+        handle,
+        { label: 'Библиотеки и ассеты', key: 'libraries' },
+        (task) => {
+          this.current = task as Task<unknown>
+        }
+      )
+      this.current = null
 
-      task.done('Готово к запуску')
+      handle.done('Готово к запуску')
       logger.info(`Сборка «${instance.name}» готова (${versionId})`)
       return { versionId, loaderVersion, mcVersion: instance.mcVersion, loader: instance.loader }
     } catch (error) {
-      task.fail((error as Error).message)
+      this.current = null
+      handle.fail((error as Error).message)
       throw error
     }
   }
 
   /** Re-checks every library/asset of an installed instance and downloads broken files. */
   async repair(instance: Instance, sharedDir: string): Promise<void> {
-    const task = tasks.create(`Проверка «${instance.name}»`, { instanceId: instance.id, total: 2, unit: 'steps' })
+    const handle = tasks.create(`Проверка «${instance.name}»`, { instanceId: instance.id, unit: 'bytes' })
     try {
-      task.stage('Разбор версии', 0, 2)
       const resolved = await Version.parse(sharedDir, instance.versionId)
-      task.stage('Проверка файлов', 1, 2)
-      await installDependencies(resolved, {})
-      task.done('Файлы в порядке')
+      await runXmclTask(
+        installDependenciesTask(resolved),
+        handle,
+        { label: 'Проверка файлов', key: 'libraries' },
+        (task) => {
+          this.current = task as Task<unknown>
+        }
+      )
+      this.current = null
+      handle.done('Файлы в порядке')
     } catch (error) {
-      task.fail((error as Error).message)
+      handle.fail((error as Error).message)
       throw error
     }
   }

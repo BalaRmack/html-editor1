@@ -92,6 +92,7 @@ export const IPC = {
     search: 'mods:search',
     project: 'mods:project',
     versions: 'mods:versions',
+    packVersions: 'mods:pack-versions',
     install: 'mods:install',
     installed: 'mods:installed',
     remove: 'mods:remove',
@@ -197,6 +198,8 @@ export interface LauncherApi {
     search(query: ModQuery): Promise<ModSearchResult>
     project(source: ModQuery['source'], id: string): Promise<ModHit | null>
     versions(source: ModQuery['source'], projectId: string, mcVersion: string, loader: LoaderType): Promise<ModVersion[]>
+    /** Versions of a modpack before an instance exists (no loader filter). */
+    packVersions(source: ModQuery['source'], projectId: string, mcVersion?: string | null): Promise<ModVersion[]>
     install(input: ModInstallInput): Promise<ModInstallResult>
     installed(instanceId: string): Promise<InstalledMod[]>
     remove(instanceId: string, fileName: string): Promise<void>

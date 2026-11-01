@@ -241,6 +241,8 @@ export interface TaskProgress {
   id: string
   label: string
   stage: string
+  /** Machine-readable stage id so the renderer can localise it. */
+  stageKey?: string
   current: number
   total: number
   unit: 'files' | 'bytes' | 'steps'

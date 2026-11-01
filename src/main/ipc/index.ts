@@ -342,6 +342,9 @@ export function registerIpc(): void {
   handle(IPC.mods.versions, (_event, source: ModQuery['source'], projectId: string, mcVersion: string, loader: LoaderType) =>
     modsService.versions(source, projectId, mcVersion, loader, configStore.get().settings)
   )
+  handle(IPC.mods.packVersions, (_event, source: ModQuery['source'], projectId: string, mcVersion?: string | null) =>
+    modsService.packVersions(source, projectId, mcVersion ?? null, configStore.get().settings)
+  )
   handle(IPC.mods.install, (_event, input: ModInstallInput) => modsService.install(input, configStore.get().settings))
   handle(IPC.mods.installed, (_event, instanceId: string) => modsService.installed(instanceId))
   handle(IPC.mods.remove, (_event, instanceId: string, fileName: string) => modsService.remove(instanceId, fileName))

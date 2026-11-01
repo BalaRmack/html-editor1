@@ -4,7 +4,7 @@ import { useEffect } from 'react'
 import { Background, PageTransition, Sidebar, TitleBar, TopBar } from './components/layout'
 import { Button, Modal, ToastHost } from './components/ui'
 import { ConsoleScreen } from './features/Console'
-import { InstanceWizard } from './features/InstanceWizard'
+import { CreateInstanceModal } from './features/CreateInstance'
 import { InstancesScreen } from './features/Instances'
 import { ModsScreen } from './features/Mods'
 import { PlayScreen } from './features/Play'
@@ -112,7 +112,7 @@ export default function App(): JSX.Element {
         </div>
       </div>
 
-      <InstanceWizard />
+      <CreateInstanceModal />
       <ProfileModal />
       <CrashModal />
       <ToastHost toasts={toasts} />

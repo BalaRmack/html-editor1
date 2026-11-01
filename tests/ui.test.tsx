@@ -45,7 +45,7 @@ beforeEach(() => {
     task: null,
     crash: null,
     profileModalOpen: false,
-    wizardOpen: false
+    createOpen: false
   })
 })
 

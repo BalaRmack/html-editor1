@@ -257,23 +257,171 @@ const installedMods: Record<string, InstalledMod[]> = {
   a3: []
 }
 
-const tick = async (label: string, stages: string[], instanceId?: string): Promise<void> => {
+/** A simulated install stage: byte-based so the UI can show real-looking progress. */
+interface MockStage {
+  key: string
+  label: string
+  total: number
+  unit?: 'bytes' | 'files'
+  steps?: number
+  ms?: number
+}
+
+const MB = 1024 * 1024
+
+/**
+ * Drives the task listeners the same way the main process does: several chunks
+ * per stage with a `stageKey`, then a final `done` payload. Timings are short
+ * enough to stay pleasant in the preview but long enough to read.
+ */
+const tick = async (
+  label: string,
+  stages: (MockStage | string)[],
+  instanceId?: string
+): Promise<void> => {
   const id = `mock-task-${Date.now()}`
-  for (let i = 0; i < stages.length; i++) {
+  const emit = (stage: string, current: number, total: number, unit: 'bytes' | 'files', stageKey?: string): void => {
     taskListeners.forEach((listener) =>
-      listener({ id, label, stage: stages[i], current: i, total: stages.length, unit: 'steps', status: 'running', instanceId })
+      listener({ id, label, stage, stageKey, current, total, unit, status: 'running', instanceId })
     )
-    await sleep(450)
   }
+
+  for (const entry of stages) {
+    const stage: MockStage =
+      typeof entry === 'string' ? { key: '', label: entry, total: 6, unit: 'files', ms: 420 } : entry
+    const total = stage.total
+    const unit = stage.unit ?? 'bytes'
+    const frames = stage.steps ?? 14
+    const stepMs = Math.max(60, (stage.ms ?? 1500) / frames)
+    for (let frame = 0; frame <= frames; frame++) {
+      emit(stage.label, Math.round((total * frame) / frames), total, unit, stage.key || undefined)
+      if (frame < frames) await sleep(stepMs)
+    }
+  }
+
   taskListeners.forEach((listener) =>
-    listener({ id, label, stage: 'Готово', current: stages.length, total: stages.length, unit: 'steps', status: 'done', instanceId })
+    listener({ id, label, stage: 'Готово', current: 1, total: 1, unit: 'steps', status: 'done', instanceId })
   )
+  await sleep(260)
 }
 
 function setGame(patch: Partial<GameSnapshot>): void {
   game = { ...game, ...patch }
   stateListeners.forEach((listener) => listener(game))
 }
+
+const PACKS: ModHit[] = [
+  {
+    id: 'fabulously-optimized',
+    slug: 'fabulously-optimized',
+    name: 'Fabulously Optimized',
+    summary: 'A lightweight, performance-focused Fabric pack that stays close to vanilla — Sodium, Iris, Lithium and friends.',
+    author: 'robotkoer',
+    downloads: 12_400_000,
+    follows: 24_800,
+    iconUrl: null,
+    categories: ['optimization', 'lightweight'],
+    loaders: ['fabric'],
+    gameVersions: ['1.21.4', '1.21.1'],
+    projectType: 'modpack',
+    updatedAt: now,
+    source: 'modrinth'
+  },
+  {
+    id: 'better-mc',
+    slug: 'better-mc-fabric',
+    name: 'Better MC [FABRIC]',
+    summary: 'The classic all-in-one adventure pack: new biomes, dungeons, bosses and quests on top of Fabric.',
+    author: 'LunaPixelStudios',
+    downloads: 8_900_000,
+    follows: 31_200,
+    iconUrl: null,
+    categories: ['adventure', 'kitchen-sink'],
+    loaders: ['fabric'],
+    gameVersions: ['1.21.1', '1.20.1'],
+    projectType: 'modpack',
+    updatedAt: now,
+    source: 'modrinth'
+  },
+  {
+    id: 'all-of-fabric',
+    slug: 'all-of-fabric-6',
+    name: 'All of Fabric 6',
+    summary: 'Kitchen-sink tech and magic pack with quests, balanced progression and over 350 mods.',
+    author: 'Hrry',
+    downloads: 3_200_000,
+    follows: 14_100,
+    iconUrl: null,
+    categories: ['technology', 'quests'],
+    loaders: ['fabric'],
+    gameVersions: ['1.20.1'],
+    projectType: 'modpack',
+    updatedAt: now,
+    source: 'modrinth'
+  },
+  {
+    id: 'create-above-beyond',
+    slug: 'create-above-and-beyond',
+    name: 'Create: Above and Beyond',
+    summary: 'A technology- and automation-focused pack built entirely around the Create mod.',
+    author: 'simibubi',
+    downloads: 5_600_000,
+    follows: 19_400,
+    iconUrl: null,
+    categories: ['technology', 'hardcore'],
+    loaders: ['forge'],
+    gameVersions: ['1.20.1'],
+    projectType: 'modpack',
+    updatedAt: now,
+    source: 'modrinth'
+  },
+  {
+    id: 'cobblemon-official',
+    slug: 'cobblemon-official',
+    name: 'Cobblemon [Official]',
+    summary: 'The official Cobblemon experience: catch, battle and breed Pokémon in Minecraft.',
+    author: 'Cobblemon',
+    downloads: 2_700_000,
+    follows: 26_900,
+    iconUrl: null,
+    categories: ['adventure'],
+    loaders: ['fabric', 'neoforge'],
+    gameVersions: ['1.21.1'],
+    projectType: 'modpack',
+    updatedAt: now,
+    source: 'modrinth'
+  }
+]
+
+const LOADER_CATALOGUE: Record<string, string[]> = {
+  fabric: ['0.16.10', '0.16.9', '0.16.5', '0.15.11', '0.14.24'],
+  quilt: ['0.27.2', '0.26.4', '0.25.0', '0.24.0'],
+  forge: ['52.0.7', '52.0.2', '51.0.33', '47.2.0', '43.2.14'],
+  neoforge: ['21.1.77', '21.1.72', '21.1.65', '20.4.237']
+}
+
+const MC_VERSIONS = [
+  ['1.21.4', 'release'],
+  ['1.21.3', 'release'],
+  ['1.21.1', 'release'],
+  ['1.21', 'release'],
+  ['1.20.6', 'release'],
+  ['1.20.4', 'release'],
+  ['1.20.2', 'release'],
+  ['1.20.1', 'release'],
+  ['1.19.4', 'release'],
+  ['1.19.2', 'release'],
+  ['1.18.2', 'release'],
+  ['1.17.1', 'release'],
+  ['1.16.5', 'release'],
+  ['1.15.2', 'release'],
+  ['1.14.4', 'release'],
+  ['1.12.2', 'release'],
+  ['25w46a', 'snapshot'],
+  ['25w45a', 'snapshot'],
+  ['25w44a', 'snapshot'],
+  ['24w49a', 'snapshot']
+] as const
 
 const modVersions = (projectId: string, mcVersion: string, loader: string): ModVersion[] => {
   const base = MODS.find((mod) => mod.id === projectId)
@@ -401,21 +549,30 @@ export function createMockApi(): LauncherApi {
     },
     versions: {
       minecraft: async () =>
-        ['1.21.4', '1.21.1', '1.21', '1.20.6', '1.20.4', '1.20.1', '1.19.4', '1.18.2', '1.16.5', '1.12.2'].map((id) => ({
+        MC_VERSIONS.map(([id, type], index) => ({
           id,
-          type: 'release',
-          releaseTime: now
+          type,
+          releaseTime: new Date(Date.now() - index * 1000 * 60 * 60 * 24 * 26).toISOString()
         })),
-      loaders: async () => [
-        { version: '0.16.10', stable: true },
-        { version: '0.16.9', stable: true },
-        { version: '0.15.11', stable: false }
-      ]
+      loaders: async (_mcVersion, loader) => {
+        await sleep(220)
+        return (LOADER_CATALOGUE[loader] ?? []).map((version, index) => ({ version, stable: index < 2 }))
+      }
     },
     install: {
       run: async (instanceId: string) => {
         const instance = instances.find((item) => item.id === instanceId)
-        await tick(`Установка «${instance?.name ?? ''}»`, ['Проверка версии', 'Установка загрузчика', 'Библиотеки и ассеты'], instanceId)
+        const fabric = instance?.loader !== 'vanilla'
+        await tick(
+          `Установка «${instance?.name ?? ''}»`,
+          [
+            { key: 'manifest', label: 'Чтение манифеста версии', total: 6, unit: 'files', ms: 420 },
+            { key: 'version', label: 'Загрузка файлов игры', total: 22 * MB, ms: 1400 },
+            ...(fabric ? [{ key: 'loader', label: 'Установка загрузчика', total: 9 * MB, ms: 900 }] : []),
+            { key: 'libraries', label: 'Библиотеки, ассеты и natives', total: 64 * MB, ms: 1900 }
+          ],
+          instanceId
+        )
         if (instance) instance.installed = true
         return { ok: true }
       },
@@ -503,12 +660,40 @@ export function createMockApi(): LauncherApi {
       search: async (query) => {
         await sleep(420)
         const text = (query.query ?? '').toLowerCase()
+        if (query.projectType === 'modpack') {
+          const text2 = (query.query ?? '').toLowerCase()
+          const packs = PACKS.filter(
+            (pack) =>
+              !text2 || pack.name.toLowerCase().includes(text2) || pack.summary.toLowerCase().includes(text2)
+          ).map((pack) => ({ ...pack, source: query.source }))
+          return { hits: packs, total: packs.length, offset: 0, limit: 20 }
+        }
         const hits = MODS.filter(
           (mod) =>
             (!text || mod.name.toLowerCase().includes(text) || mod.summary.toLowerCase().includes(text)) &&
             (!query.loader || query.loader === 'vanilla' || mod.loaders.includes(query.loader))
         ).map((mod) => ({ ...mod, source: query.source }))
         return { hits, total: hits.length, offset: 0, limit: 20 }
+      },
+      packVersions: async (_source, projectId, mcVersion) => {
+        await sleep(280)
+        const pack = PACKS.find((item) => item.id === projectId)
+        const versions = mcVersion ? [mcVersion] : pack?.gameVersions ?? ['1.21.1']
+        return versions.flatMap((gameVersion, index) => [
+          {
+            id: `${projectId}-${gameVersion}-${index}`,
+            projectId,
+            name: `${pack?.name ?? projectId} ${gameVersion} · r${2 - index}`,
+            versionNumber: gameVersion,
+            gameVersions: [gameVersion],
+            loaders: pack?.loaders ?? ['fabric'],
+            datePublished: now,
+            downloadUrl: `https://example.invalid/${projectId}-${gameVersion}.mrpack`,
+            fileName: `${projectId}-${gameVersion}.mrpack`,
+            fileSize: 28_000_000 + index * 3_400_000,
+            dependencies: []
+          }
+        ])
       },
       project: async (source, id) => {
         const mod = MODS.find((item) => item.id === id)
@@ -517,7 +702,7 @@ export function createMockApi(): LauncherApi {
       versions: async (_source, projectId, mcVersion, loader) => modVersions(projectId, mcVersion, loader),
       install: async (input) => {
         const instance = instances.find((item) => item.id === input.instanceId)!
-        await tick('Установка мода', ['Загрузка файла', 'Проверка зависимостей'], input.instanceId)
+        await tick('Установка мода', [{ key: 'packDownload', label: 'Загрузка файла', total: 1.2 * MB, ms: 700 }], input.instanceId)
         const list = installedMods[input.instanceId] ?? []
         const mod = MODS.find((item) => item.id === input.projectId)
         list.push({
@@ -544,7 +729,11 @@ export function createMockApi(): LauncherApi {
         if (mod) mod.enabled = enabled
       },
       installPack: async (input) => {
-        await tick(`Модпак «${input.projectName}»`, ['Скачивание архива', 'Создание сборки', 'Установка модов'])
+        await tick(`Модпак «${input.projectName}»`, [
+          { key: 'packDownload', label: 'Скачивание архива модпака', total: 34 * MB, ms: 1900 },
+          { key: 'packFiles', label: 'Загрузка модов из манифеста', total: 186 * MB, ms: 3200 },
+          { key: 'overrides', label: 'Конфиги и оверрайды', total: 12 * MB, ms: 900 }
+        ])
         const created = makeInstance(`pack-${Date.now()}`, input.projectName, '1.21.1', 'fabric', 42)
         instances.unshift(created)
         return created

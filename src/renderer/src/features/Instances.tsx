@@ -106,7 +106,7 @@ export function InstancesScreen(): JSX.Element {
   const instances = useAppStore((state) => state.instances)
   const selectedId = useAppStore((state) => state.selectedId)
   const setSelected = useAppStore((state) => state.setSelected)
-  const setWizardOpen = useAppStore((state) => state.setWizardOpen)
+  const openCreate = useAppStore((state) => state.openCreate)
   const launch = useAppStore((state) => state.launch)
   const stopGame = useAppStore((state) => state.stopGame)
   const installInstance = useAppStore((state) => state.installInstance)
@@ -157,7 +157,7 @@ export function InstancesScreen(): JSX.Element {
         title={t('instances.title')}
         description={t('instances.subtitle')}
         action={
-          <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setWizardOpen(true)}>
+          <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => openCreate()}>
             {t('instances.create')}
           </Button>
         }
@@ -179,7 +179,7 @@ export function InstancesScreen(): JSX.Element {
             description={instances.length === 0 ? t('instances.emptyHint') : t('mods.emptyHint')}
             action={
               instances.length === 0 ? (
-                <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setWizardOpen(true)}>
+                <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => openCreate()}>
                   {t('instances.create')}
                 </Button>
               ) : null

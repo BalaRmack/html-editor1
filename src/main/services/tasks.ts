@@ -4,7 +4,7 @@ type TaskListener = (progress: TaskProgress) => void
 
 export interface TaskHandle {
   readonly id: string
-  stage(stage: string, current?: number, total?: number, unit?: TaskProgress['unit']): void
+  stage(stage: string, current?: number, total?: number, unit?: TaskProgress['unit'], stageKey?: string): void
   /** increment current progress by `delta` */
   bump(delta?: number): void
   done(stage?: string): void
@@ -40,6 +40,7 @@ class TaskService {
     let total = options.total ?? 0
     let unit = options.unit ?? 'steps'
     let stage = label
+    let stageKey: string | undefined
     let status: TaskStatus = 'running'
 
     const push = (): void => {
@@ -47,6 +48,7 @@ class TaskService {
         id,
         label,
         stage,
+        stageKey,
         current,
         total,
         unit,
@@ -59,8 +61,9 @@ class TaskService {
 
     return {
       id,
-      stage(nextStage, nextCurrent, nextTotal, nextUnit) {
+      stage(nextStage, nextCurrent, nextTotal, nextUnit, nextKey) {
         stage = nextStage
+        stageKey = nextKey
         if (typeof nextCurrent === 'number') current = nextCurrent
         if (typeof nextTotal === 'number') total = nextTotal
         if (nextUnit) unit = nextUnit
