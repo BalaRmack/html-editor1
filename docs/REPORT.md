@@ -1,10 +1,18 @@
-# Verdant Launcher 1.0.0 — отчёт
+# Verdant Launcher — отчёт
+
+**Актуальный релиз: 1.1.0** — https://github.com/BalaRmack/html-editor1/releases/tag/v1.1.0
+Установщик: `Verdant-Launcher-1.1.0-Setup.exe` (122 МБ, NSIS, x64, свой мастер).
+Прямая ссылка: https://github.com/BalaRmack/html-editor1/releases/download/v1.1.0/Verdant-Launcher-1.1.0-Setup.exe
+
+<details>
+<summary>Релиз 1.0.0</summary>
 
 **Релиз:** https://github.com/BalaRmack/html-editor1/releases/tag/v1.0.0
 **Установщик:** `Verdant-Launcher-1.0.0-Setup.exe` (122 МБ, NSIS, x64)
 Прямая ссылка: https://github.com/BalaRmack/html-editor1/releases/download/v1.0.0/Verdant-Launcher-1.0.0-Setup.exe
 
 Ветка: `arena/6413909d-html-editor1` · коммит релиза: `2798234`
+</details>
 
 ---
 
