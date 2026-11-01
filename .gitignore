@@ -10,3 +10,11 @@ dist/
 .vscode/
 packages/
 tmp/
+
+# Bootstrapper build output (installer/app/package.json stays tracked)
+installer/app/main.js
+installer/app/preload.js
+installer/app/renderer/
+dist-payload/
+release-installer/
+*.part

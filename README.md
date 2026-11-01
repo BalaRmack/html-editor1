@@ -35,7 +35,9 @@ npm run dev          # запуск Electron-приложения (main + preloa
 | `npm test` | Юнит-тесты ядра (UUID, maven, JVM-аргументы, PNG, launch args) |
 | `npm run test:ui` | Smoke-тесты React-интерфейса в jsdom |
 | `npm run build` | typecheck + сборка в `out/` |
-| `npm run package` | Сборка Windows NSIS-установщика в `release/` (локально, нужен Windows/Wine) |
+| `npm run package` | Полный цикл: лаунчер → `app.zip` → `Verdant-Launcher-<version>-Setup.exe` в `release-installer/` |
+| `npm run build:payload` | Только payload лаунчера (`release/win-unpacked` → `dist-payload/app.zip`) |
+| `npm run package:bootstrapper` | Только установщик (нужен готовый `dist-payload/app.zip`) |
 
 ### Живые тесты API
 
@@ -146,8 +148,8 @@ Renderer не имеет доступа к `fs`/`path`/`child_process` — то�
 
 | Workflow | Триггер | Что делает |
 |---|---|---|
-| `.github/workflows/ci.yml` | push в `main` / `arena/**`, PR | typecheck, юнит- и UI-тесты, сборка; отдельный job собирает настоящий NSIS-установщик (артефакт), ещё один — живые тесты Mojang/Fabric/Modrinth |
-| `.github/workflows/release.yml` | тег `v*` | тесты → сборка → `electron-builder` NSIS `.exe` → GitHub Release с артефактом |
+| `.github/workflows/ci.yml` | push в `main` / `arena/**`, PR | typecheck, юнит- и UI-тесты, сборка; отдельный job собирает **bootstrapper** (`--dir` → `app.zip` → portable `.exe`) и проверяет размер, ещё один — живые тесты Mojang/Fabric/Modrinth |
+| `.github/workflows/release.yml` | тег `v*` | тесты → сборка лаунчера → `app.zip` → сборка установщика → portable `.exe` → GitHub Release |
 
 Релиз:
 
@@ -156,25 +158,35 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Установщик создаёт ярлыки на Рабочем столе и в меню «Пуск», иконку приложения
-(`build/icon.ico`), поддерживает выбор папки установки. Артефакт — `Verdant-Launcher-<version>-Setup.exe`.
+Артефакт — `Verdant-Launcher-<version>-Setup.exe`: не NSIS-мастер, а собственное
+Electron-приложение (bootstrapper) с тёмным окном, которое распаковывает лаунчер
+в `%LOCALAPPDATA%\VerdantLauncher`, создаёт ярлыки на Рабочем столе и в меню
+«Пуск» и записывается в «Установка и удаление программ».
 
-### Мастер установки
-
-Установщик и деинсталлятор используют собственный NSIS-скрипт `build/installer.nsh`
-(подключается через `nsis.include`): тёмные страницы, изумрудный прогресс-бар,
-брендированные сайдбар и шапка, а у деинсталлятора — страница с галочкой
-«Удалить настройки и сохранения» и кнопками «Удалить» / «Отмена».
-
-Битмапы мастера рендерятся заранее, чтобы в установщике не было «системного» вида:
+### Установщик (bootstrapper на Electron)
 
 ```bash
-python3 build/installer/generate.py            # build/installer/*.bmp
-python3 build/installer/generate.py --preview  # + docs/screens/installer-*.png
+npm run build:payload       # лаунчер → release/win-unpacked → dist-payload/app.zip
+npm run build:installer     # React-UI установщика → installer/app/
+npm run package:bootstrapper # electron-builder -c electron-builder.installer.yml
 ```
 
-Скрипт проверяется `tests/installer.test.ts` (размеры битмапов, привязка в
-`electron-builder.yml`, UTF-8 BOM) и реальной сборкой `.exe` в CI.
+| Часть | Файл |
+|---|---|
+| главный процесс | `installer/main.ts` (frameless-окно, IPC, `--uninstall` / `--silent` / `--wait-pid`) |
+| логика установки | `installer/core.ts` (yauzl → `%LOCALAPPDATA%`, ярлыки, `reg.exe` в `HKCU`) |
+| мост | `installer/preload.ts` (`contextBridge`, без `nodeIntegration`) |
+| UI | `installer/renderer/*` — React 18 + Tailwind + Framer Motion, тёмная палитра Verdant |
+| упаковка | `electron-vite.installer.config.ts`, `electron-builder.installer.yml` (`target: portable`) |
+
+Удаление запускает **тот же** exe с `--uninstall` и галочкой
+«Удалить сохранения и настройки»; файлы лаунчера, ярлыки и запись реестра
+удаляются всегда. Скриншоты: `docs/screens/setup-{welcome,progress,done,uninstall}.png`.
+
+Проверяется `tests/bootstrapper.test.ts` (реестр, пути, zip-round-trip,
+install/uninstall) и `tests/installer.test.ts` (payload вместо NSIS, ключ
+`HKCU\…\Uninstall\VerdantLauncher`, frameless-окно, синхронизация версий);
+реальная сборка `.exe` — в CI на `windows-latest`.
 
 ---
 

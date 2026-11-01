@@ -311,7 +311,7 @@ export function PlayScreen(): JSX.Element {
                               onClick={() => void retryInstall(instance.id)}
                             >
                               <RefreshCw className="h-3.5 w-3.5" />
-                              {t('play.retry')}
+                              {errorCode === 'network_error' ? t('play.resume') : t('play.retry')}
                             </button>
                             <button
                               className="flex items-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 text-[11px] text-white/70 transition hover:border-white/25 hover:text-white"

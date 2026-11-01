@@ -9,14 +9,15 @@
 
 ```
 html-editor1/
-├─ .github/workflows/release.yml        # CI: tag v* -> Windows NSIS .exe -> GitHub Release
+├─ .github/workflows/release.yml        # CI: tag v* -> bootstrapper .exe -> GitHub Release
 ├─ build/                               # ресурсы electron-builder
 │  ├─ icon.ico                          # иконка приложения / установщика
-│  ├─ icon.png                          # 512x512
-│  └─ installer.nsh                     # кастомные шаги NSIS (ярлыки)
+│  └─ icon.png                          # 512x512
 ├─ docs/PLAN.md
 ├─ electron.vite.config.ts              # 3 сборки: main / preload / renderer
-├─ electron-builder.yml                 # NSIS, shortcuts, publish=github
+├─ electron-builder.yml                 # payload лаунчера (--dir), publish=github
+├─ electron-builder.installer.yml       # bootstrapper: portable .exe с app.zip внутри
+├─ installer/                           # своё приложение-установщик (main/core/preload/renderer)
 ├─ package.json / package-lock.json
 ├─ tsconfig.json / tsconfig.node.json / tsconfig.web.json
 └─ src/
@@ -117,7 +118,7 @@ React (zustand)  --invoke-->  preload (contextBridge, whitelisted API)
 | `electron-vite` | ^5.0.0 | сборка main/preload/renderer (esbuild + Vite 7) |
 | `vite` | ^7.3.7 | бандлер renderer |
 | `@vitejs/plugin-react` | ^5.1.0 | React (Babel/SWC HMR) |
-| `electron-builder` | ^26.18.0 | NSIS `.exe`, ярлыки, GitHub Release |
+| `electron-builder` | ^26.18.0 | portable `.exe` установщика, GitHub Release |
 | `typescript` | ^5.9.3 | типы |
 | `tailwindcss` + `@tailwindcss/vite` | ^4.3.3 | utility-CSS |
 | `sass` | ^1.107.1 | SCSS для glass-эффектов/анимаций |

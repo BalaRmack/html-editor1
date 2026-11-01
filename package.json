@@ -1,6 +1,6 @@
 {
   "name": "verdant-launcher",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Verdant Launcher — premium Minecraft launcher",
   "main": "./out/main/index.js",
   "author": "BalaRmack",
@@ -14,13 +14,16 @@
     "start": "electron-vite preview",
     "build": "npm run typecheck && electron-vite build",
     "build:only": "electron-vite build",
-    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.installer.json --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "preview:ui": "vite --config vite.preview.config.ts --host 0.0.0.0 --port 4173",
-    "package": "npm run build:only && electron-builder --win --publish never",
+    "package": "npm run build:payload && npm run package:bootstrapper",
     "package:dir": "npm run build:only && electron-builder --win --dir",
     "test:ui": "vitest run --config vitest.ui.config.ts",
-    "test:all": "vitest run --config vitest.config.ts && vitest run --config vitest.ui.config.ts"
+    "test:all": "vitest run --config vitest.config.ts && vitest run --config vitest.ui.config.ts",
+    "build:installer": "electron-vite build --config electron.vite.installer.config.ts",
+    "build:payload": "npm run build:only && electron-builder --win --dir --publish never && node scripts/make-payload.mjs",
+    "package:bootstrapper": "npm run build:installer && electron-builder --win --x64 --config electron-builder.installer.yml --publish never"
   },
   "dependencies": {
     "@xmcl/core": "2.15.1",

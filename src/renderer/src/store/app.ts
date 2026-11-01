@@ -425,7 +425,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       vars: result.file ? { file: result.file } : undefined,
       description: result.message,
       sticky: true,
-      action: { labelKey: 'common.retry', icon: 'retry', run: () => void get().retryInstall(id) }
+      // A network drop is resumable: the button continues the install from the
+      // bytes already on disk instead of starting from zero.
+      action: { labelKey: code === 'network_error' ? 'common.resume' : 'common.retry', icon: 'retry', run: () => void get().retryInstall(id) }
     })
     return false
   },

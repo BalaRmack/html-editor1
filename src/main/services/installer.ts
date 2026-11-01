@@ -9,13 +9,13 @@ import {
   installForge,
   installNeoForged,
   installQuiltVersion,
-  installVersionTask,
   type MinecraftVersion
 } from '@xmcl/installer'
 import { createFork, type Task } from '@xmcl/task'
 import { FORGE_MAVEN, NEOFORGE_MAVEN, USER_AGENT } from '../../shared/constants'
 import type { Instance, IntegrityReport, LoaderType, TaskProgress } from '../../shared/types'
-import { delay, mirrorFetch, ProgressTracker } from './downloader'
+import { clientJarUrls, ensureAssetIndex, planAssets, planLibraries, planLogging, planMissing, versionJsonUrls } from './assets'
+import { delay, downloadBatch, downloadFile, mirrorFetch, ProgressTracker } from './downloader'
 import { AppError, toFailure, withStage } from './errors'
 import { checkIntegrity } from './integrity'
 import { brokenJsonReason, dropIfBrokenJson, purgeBrokenJsonIn } from './json-guard'
@@ -132,8 +132,17 @@ function isNetworkFailure(error: unknown): boolean {
  * Mojang or to BMCLAPI for the rest of the run.
  */
 export function xmclDownloadOptions(): Record<string, unknown> {
-  const mirrorFirst = getNetworkState().mode !== 'official'
+  const officialPinned = getNetworkState().mode === 'official'
+  // Host lists are ordered: xmcl takes the first entry that answers, so BMCLAPI
+  // is substituted *before* the first request — that is the "forcefully" part.
+  // When the mirror itself is proven dead we pin the session to Mojang.
+  const mavenHost = officialPinned ? [FORGE_MAVEN, `${BMCL_MIRROR}/maven`] : [`${BMCL_MIRROR}/maven`, FORGE_MAVEN]
+  const assetsHost = officialPinned
+    ? ['https://resources.download.minecraft.net', `${BMCL_MIRROR}/assets`]
+    : [`${BMCL_MIRROR}/assets`, 'https://resources.download.minecraft.net']
   return {
+    // Mirror-first transport with a 4 s give-up on any official host and a 15 s
+    // body-stall timeout; `@xmcl` downloads go through the keep-alive agent.
     fetch: mirrorFetch,
     headers: { 'User-Agent': USER_AGENT },
     librariesDownloadConcurrency: 16,
@@ -142,34 +151,31 @@ export function xmclDownloadOptions(): Record<string, unknown> {
     // library never changes, and hashing 400 files at every launch is what made
     // "Проверка файлов" feel frozen.
     prevalidSizeOnly: true,
-    ...(mirrorFirst
-      ? {
-          mavenHost: [`${BMCL_MIRROR}/maven`],
-          assetsHost: [`${BMCL_MIRROR}/assets`],
-          assetsIndexUrl: (version: { assetIndex?: { url?: string; id?: string } }): string[] => {
-            const urls: string[] = []
-            if (version.assetIndex?.url) urls.push(version.assetIndex.url, rewriteToMirror(version.assetIndex.url))
-            else if (version.assetIndex?.id) urls.push(`https://launchermeta.mojang.com/v1/packages/x/${version.assetIndex.id}.json`)
-            return [...new Set(urls.filter(Boolean))]
-          }
-        }
-      : {})
+    mavenHost,
+    assetsHost,
+    assetsIndexUrl: (version: { assetIndex?: { url?: string; id?: string } }): string[] => {
+      const urls: string[] = []
+      if (version.assetIndex?.url) {
+        const official = version.assetIndex.url
+        urls.push(officialPinned ? official : rewriteToMirror(official), officialPinned ? rewriteToMirror(official) : official)
+      } else if (version.assetIndex?.id) {
+        urls.push(`https://launchermeta.mojang.com/v1/packages/x/${version.assetIndex.id}.json`)
+      }
+      return [...new Set(urls.filter(Boolean))]
+    }
   }
 }
 
-/** Official URL first, mirrored twin second. */
-function urlPair(url: string | undefined): string[] {
-  if (!url) return []
-  const mirrored = rewriteToMirror(url)
-  return mirrored === url ? [url] : [url, mirrored]
-}
 
 export class InstallerService {
   private cancelled = false
   private current: Task<unknown> | null = null
+  /** Aborts every in-flight socket of the file pool on cancel. */
+  private abort = new AbortController()
 
   cancel(): void {
     this.cancelled = true
+    this.abort.abort()
     void this.current?.cancel?.().catch(() => undefined)
   }
 
@@ -344,6 +350,154 @@ export class InstallerService {
    *  3. every library and asset for the resolved version.
    * Progress is reported in bytes so the UI can render a real progress bar.
    */
+  /** Vanilla version json + client jar, mirror-first and resumable. */
+  private async downloadVanilla(
+    mcVersion: string,
+    meta: { id: string; url?: string },
+    sharedDir: string,
+    handle: TaskHandle,
+    tracker: ProgressTracker
+  ): Promise<void> {
+    const dir = join(sharedDir, 'versions', mcVersion)
+    const jsonPath = join(dir, `${mcVersion}.json`)
+    const jarPath = join(dir, `${mcVersion}.jar`)
+
+    let total = 0
+    let done = 0
+    const emit = (): void => {
+      const snapshot = tracker.report(done, total || 1)
+      handle.metrics({
+        percent: snapshot.percent,
+        bytesPerSecond: snapshot.bytesPerSecond,
+        etaSeconds: snapshot.etaSeconds
+      })
+    }
+    const onBytes = (bytes: number): void => {
+      if (bytes < 0) return
+      done += bytes
+      emit()
+    }
+
+    handle.stage(`Версия Minecraft ${mcVersion}`, 0, 0, 'bytes', 'version')
+    await downloadFile(
+      { urls: versionJsonUrls(mcVersion, meta.url), url: versionJsonUrls(mcVersion, meta.url)[0], destination: jsonPath, name: `${mcVersion}.json` },
+      { signal: this.abort.signal, onBytes, onTotal: (bytes) => { total += bytes; emit() } }
+    )
+    this.checkCancelled()
+
+    const resolved = await Version.parse(sharedDir, mcVersion)
+    const client = resolved.downloads?.client
+    if (client?.url) {
+      total += client.size ?? 0
+      emit()
+      await downloadFile(
+        {
+          url: clientJarUrls(mcVersion, client.url)[0],
+          urls: clientJarUrls(mcVersion, client.url),
+          destination: jarPath,
+          sha1: client.sha1,
+          size: client.size,
+          name: `${mcVersion}.jar`
+        },
+        { signal: this.abort.signal, onBytes }
+      )
+    }
+    tracker.mark(INSTALL_PHASES.version.to)
+    handle.metrics({ percent: INSTALL_PHASES.version.to })
+  }
+
+  /**
+   * Downloads every library, native, asset and the log config of a version with
+   * our own transport.
+   *
+   * This is the answer to «прогресс завис на 40.9 МБ из 199 МБ»: the total is
+   * computed *before* the first byte (sum of the missing files), every request
+   * has a hard stall timeout, the mirror is the first candidate, and a failed
+   * file never stops the other fifteen sockets of the pool.
+   */
+  private async downloadGameFiles(
+    resolved: Awaited<ReturnType<typeof Version.parse>>,
+    sharedDir: string,
+    handle: TaskHandle,
+    tracker: ProgressTracker
+  ): Promise<void> {
+    this.checkCancelled()
+    const index = await ensureAssetIndex(resolved, sharedDir, { signal: this.abort.signal })
+    if (index.error) logger.warn(`Asset index: ${index.error}`)
+
+    const files = [
+      ...planLibraries(resolved, sharedDir),
+      ...planLogging(resolved, sharedDir),
+      ...(index.index ? planAssets(index.index, sharedDir) : [])
+    ]
+    const plan = await planMissing(files)
+    logger.info(
+      `Файлы игры: всего ${files.length}, уже на диске ${plan.present}, к загрузке ${plan.todo.length} (${(plan.bytes / (1024 * 1024)).toFixed(1)} МБ)`
+    )
+
+    if (plan.todo.length === 0) {
+      tracker.mark(INSTALL_PHASES.libraries.to)
+      handle.metrics({ percent: INSTALL_PHASES.libraries.to, bytesPerSecond: 0, etaSeconds: 0 })
+      return
+    }
+
+    const total = plan.bytes > 0 ? plan.bytes : plan.todo.length
+    const byBytes = plan.bytes > 0
+    let done = 0
+    let lastEmit = 0
+    const emit = (force = false): void => {
+      const now = Date.now()
+      if (!force && now - lastEmit < 250) return
+      lastEmit = now
+      const snapshot = tracker.report(done, total)
+      handle.metrics({
+        percent: snapshot.percent,
+        bytesPerSecond: snapshot.bytesPerSecond,
+        etaSeconds: snapshot.etaSeconds
+      })
+    }
+
+    handle.stage(`Библиотеки и ассеты: ${plan.todo.length} файлов`, 0, total, byBytes ? 'bytes' : 'files', 'libraries')
+
+    const report = await downloadBatch(plan.todo, {
+      // 16 sockets is the sweet spot: the CDN keeps up, the UI stays alive.
+      concurrency: 16,
+      signal: this.abort.signal,
+      onBytes: (bytes) => {
+        if (bytes < 0) return
+        done += bytes
+        emit()
+      }
+    })
+    done = Math.max(done, 0)
+    emit(true)
+
+    if (report.failed.length > 0) {
+      const first = report.failed[0]
+      const names = report.failed
+        .slice(0, 3)
+        .map((failure) => failure.spec.name ?? failure.spec.url)
+        .join(', ')
+      logger.error(
+        `Не удалось скачать ${report.failed.length} из ${plan.todo.length}: ${report.failed
+          .slice(0, 5)
+          .map((failure) => `${failure.spec.path}: ${failure.error.message}`)
+          .join(' | ')}`
+      )
+      throw new AppError({
+        code: 'network_error',
+        message:
+          report.failed.length === 1
+            ? `Не удалось скачать файл ${first.spec.name ?? first.spec.url}: ${first.error.message}`
+            : `Не удалось скачать ${report.failed.length} файлов (${names} и др.). Уже скачанное сохранено — нажмите «Продолжить установку»`,
+        file: first.spec.name ?? first.spec.url,
+        stage: 'libraries',
+        retryable: true
+      })
+    }
+    logger.info(`Скачано ${report.downloaded}, пропущено ${report.skipped}, ошибок 0`)
+  }
+
   async installInstance(
     instance: Instance,
     sharedDir: string,
@@ -351,6 +505,7 @@ export class InstallerService {
     options: { verifyOnly?: boolean } = {}
   ): Promise<InstallOutcome> {
     this.cancelled = false
+    this.abort = new AbortController()
     const handle = tasks.create(`Установка «${instance.name}»`, { instanceId: instance.id, unit: 'bytes' })
     const tracker = new ProgressTracker()
     tracker.beginPhase(INSTALL_PHASES.manifest)
@@ -375,20 +530,10 @@ export class InstallerService {
 
       handle.stage(`Версия Minecraft ${instance.mcVersion}`, 0, 0, 'bytes', 'version')
       tracker.beginPhase(INSTALL_PHASES.version)
+      // Version json + client jar go through our own transport as well: they
+      // live on piston-meta / piston-data, the two hosts that stall hardest.
       await this.runPhase(handle, tracker, `Версия Minecraft ${instance.mcVersion}`, 'version', () =>
-        runXmclTask(
-          installVersionTask(meta, sharedDir, {
-            ...xmclDownloadOptions(),
-            json: () => urlPair(meta.url),
-            client: (version: { downloads?: { client?: { url?: string } } }) => urlPair(version.downloads?.client?.url)
-          }),
-          handle,
-          { label: `Версия Minecraft ${instance.mcVersion}`, key: 'version' },
-          tracker,
-          (task) => {
-            this.current = task as Task<unknown>
-          }
-        )
+        this.downloadVanilla(instance.mcVersion, meta, sharedDir, handle, tracker)
       )
       this.checkCancelled()
 
@@ -418,11 +563,16 @@ export class InstallerService {
 
       tracker.beginPhase(INSTALL_PHASES.libraries)
       const resolved = await withStage('libraries', () => Version.parse(sharedDir, versionId))
-      await this.runPhase(handle, tracker, 'Библиотеки и ассеты', 'libraries', () =>
+      // Our own pool downloads the ~400 libraries/assets: mirror-first URLs,
+      // a known total, a 15 s stall timeout per file and fully resumable.
+      await this.downloadGameFiles(resolved, sharedDir, handle, tracker)
+      // Then xmcl does what only it can do: natives extraction and the final
+      // consistency pass. Everything is already on disk, so it does not download.
+      await this.runPhase(handle, tracker, 'Проверка файлов и natives', 'libraries', () =>
         runXmclTask(
           installDependenciesTask(resolved, xmclDownloadOptions()),
           handle,
-          { label: 'Библиотеки и ассеты', key: 'libraries' },
+          { label: 'Проверка файлов и natives', key: 'libraries' },
           tracker,
           (task) => {
             this.current = task as Task<unknown>
@@ -524,6 +674,8 @@ export class InstallerService {
 
   /** Re-checks every library/asset of an installed instance and downloads broken files. */
   async repair(instance: Instance, sharedDir: string): Promise<void> {
+    this.cancelled = false
+    this.abort = new AbortController()
     const handle = tasks.create(`Проверка «${instance.name}»`, { instanceId: instance.id, unit: 'bytes' })
     const tracker = new ProgressTracker()
     try {
@@ -531,6 +683,7 @@ export class InstallerService {
       await ensureNetworkMode()
       tracker.beginPhase({ key: 'libraries', from: 0, to: 98 })
       const resolved = await withStage('libraries', () => Version.parse(sharedDir, instance.versionId))
+      await this.downloadGameFiles(resolved, sharedDir, handle, tracker)
       await runXmclTask(
         installDependenciesTask(resolved, xmclDownloadOptions()),
         handle,

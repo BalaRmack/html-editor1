@@ -138,15 +138,17 @@ function emitUpdate(patch: Partial<UpdateState>): UpdateState {
   return mockUpdate
 }
 
+// Demo banner: always *one minor ahead* of the shipped build, never the shipped
+// version itself (tests/installer.test.ts forbids embedding the real version).
 const DEMO_RELEASE = {
-  version: '1.2.0',
-  tag: 'v1.2.0',
-  name: 'Verdant Launcher 1.2.0',
+  version: '1.3.0',
+  tag: 'v1.3.0',
+  name: 'Verdant Launcher 1.3.0',
   notes: 'Новый менеджер контента, автообновление и ускоренная проверка файлов.',
   publishedAt: now,
   htmlUrl: 'https://github.com/BalaRmack/html-editor1/releases',
-  assetName: 'Verdant-Launcher-1.2.0-Setup.exe',
-  assetUrl: 'https://example.invalid/Verdant-Launcher-1.2.0-Setup.exe',
+  assetName: 'Verdant-Launcher-1.3.0-Setup.exe',
+  assetUrl: 'https://example.invalid/Verdant-Launcher-1.3.0-Setup.exe',
   sizeBytes: 118_000_000
 }
 
@@ -158,7 +160,7 @@ const mockControl = {
     installedExtras.shader = DEMO_EXTRAS.shader.map((entry) => ({ ...entry }))
   },
   /** Shows the update banner as if GitHub had a newer release. */
-  offerUpdate(version = '1.2.0'): UpdateState {
+  offerUpdate(version = '1.3.0'): UpdateState {
     return emitUpdate({
       phase: 'available',
       release: { ...DEMO_RELEASE, version, tag: `v${version}` },
@@ -749,15 +751,15 @@ const modVersions = (projectId: string, mcVersion: string, loader: string): ModV
     {
       id: `${projectId}-v1`,
       projectId,
-      name: `${base?.name ?? projectId} 1.2.0`,
-      versionNumber: '1.2.0',
+      name: `${base?.name ?? projectId} 2.1.0`,
+      versionNumber: '2.1.0',
       gameVersions: [mcVersion],
       loaders: [loader],
       datePublished: now,
       downloadUrl: `https://example.invalid/${projectId}.jar`,
-      fileName: `${projectId}-1.2.0.jar`,
+      fileName: `${projectId}-2.1.0.jar`,
       fileSize: 1_800_000,
-      sha1: `${projectId}-sha1-1.2.0`,
+      sha1: `${projectId}-sha1-2.1.0`,
       dependencies: projectId === 'iris' ? [{ projectId: 'sodium', versionId: null, kind: 'required' }] : []
     },
     {
@@ -1131,21 +1133,21 @@ export function createMockApi(): LauncherApi {
         const project =
           MODS.find((item) => item.id === input.projectId) ??
           (input.kind === 'mod' ? null : CONTENT_CATALOG[input.kind].find((item) => item.id === input.projectId) ?? null)
-        const fileName = `${input.projectId}-1.2.0.${input.kind === 'mod' ? 'jar' : 'zip'}`
+        const fileName = `${input.projectId}-2.1.0.${input.kind === 'mod' ? 'jar' : 'zip'}`
         if (input.kind === 'mod') {
           const list = installedMods[instance.id] ?? []
           list.push({
             projectId: input.projectId,
             fileName,
             name: project?.name ?? input.projectId,
-            version: '1.2.0',
+            version: '2.1.0',
             iconUrl: null,
             enabled: true,
             source: input.source,
             size: 1_200_000,
             installedAt: now,
             versionId: `${input.projectId}-v1`,
-            sha1: `${input.projectId}-sha1-1.2.0`,
+            sha1: `${input.projectId}-sha1-2.1.0`,
             author: project?.author ?? null
           })
           installedMods[instance.id] = list
@@ -1156,14 +1158,14 @@ export function createMockApi(): LauncherApi {
             projectId: input.projectId,
             fileName,
             name: project?.name ?? input.projectId,
-            version: '1.2.0',
+            version: '2.1.0',
             iconUrl: null,
             enabled: true,
             source: input.source,
             size: 3_200_000,
             installedAt: now,
             versionId: `${input.projectId}-v1`,
-            sha1: `${input.projectId}-sha1-1.2.0`,
+            sha1: `${input.projectId}-sha1-2.1.0`,
             author: project?.author ?? null
           })
         }
@@ -1224,9 +1226,9 @@ export function createMockApi(): LauncherApi {
         const list = input.kind === 'mod' ? installedMods[input.instanceId] ?? [] : installedExtras[input.kind]
         const entry = list.find((item) => item.projectId === input.projectId)
         if (entry) {
-          entry.version = '1.2.0'
+          entry.version = '2.1.0'
           entry.versionId = input.versionId ?? `${input.projectId}-v1`
-          entry.sha1 = `${input.projectId}-sha1-1.2.0`
+          entry.sha1 = `${input.projectId}-sha1-2.1.0`
         }
       },
       openFolder: async () => undefined,
@@ -1284,21 +1286,21 @@ export function createMockApi(): LauncherApi {
         const mod = MODS.find((item) => item.id === input.projectId)
         list.push({
           projectId: input.projectId,
-          fileName: `${input.projectId}-1.2.0.jar`,
+          fileName: `${input.projectId}-2.1.0.jar`,
           name: mod?.name ?? input.projectId,
-          version: '1.2.0',
+          version: '2.1.0',
           iconUrl: null,
           enabled: true,
           source: input.source,
           size: 1_200_000,
           installedAt: now,
           versionId: `${input.projectId}-v1`,
-          sha1: `${input.projectId}-sha1-1.2.0`,
+          sha1: `${input.projectId}-sha1-2.1.0`,
           author: mod?.author ?? null
         })
         installedMods[input.instanceId] = list
         instance.modsCount = list.length
-        return { installed: [`${input.projectId}-1.2.0.jar`], skipped: [], warnings: [] }
+        return { installed: [`${input.projectId}-2.1.0.jar`], skipped: [], warnings: [] }
       },
       installed: async (instanceId) => installedMods[instanceId] ?? [],
       remove: async (instanceId, fileName) => {

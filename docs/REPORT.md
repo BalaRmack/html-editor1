@@ -480,7 +480,8 @@ lucide-react, **без эмодзи**). Подписи — только в ту�
   `/assets`, `libraries.minecraft.net` и все maven-хосты (Fabric, Forge, NeoForge,
   Quilt) → `/maven`, `meta.fabricmc.net` → `/fabric-meta`;
 * официальный хост пробуется первым, но два подряд сбоя переводят **всю сессию**
-  на зеркало; успешный ответ зеркала закрепляет режим;
+  на зеркало; успешный ответ зеркала закрепляет режим (в 1.2.0 порядок обращён:
+  зеркало всегда первое — см. §14.2);
 * перед установкой один быстрый пробник (3.5 с) решает, куда идти, — первый же
   запуск в РФ идёт через зеркало, без ожидания таймаутов;
 * зеркала прокинуты в `@xmcl` через `fetch`, `mavenHost`, `assetsHost`,
@@ -533,3 +534,107 @@ lucide-react, **без эмодзи**). Подписи — только в ту�
 * итог: node **133 passed / 7 skipped**, UI **27 passed**, `tsc` ×4 чисто,
   `electron-vite build` собирается;
 * скриншоты: `docs/screens/progress-speed.png`, `docs/screens/progress-waiting.png`.
+
+## 14. Релиз 1.2.0: свой установщик и принудительный BMCLAPI
+
+Два требования из одного сообщения: «Откажись от стандартных NSIS/Inno Setup.
+Реализуй кастомный Bootstrapper на базе Electron» и «Зеркала не добавлены —
+принудительно подменяй URL библиотек, ассетов и нативов, официальный хост
+отключай за 3–5 секунд». Оба сделаны в одной версии.
+
+### 14.1. Установщик — отдельное Electron-приложение
+
+NSIS удалён целиком: `build/installer.nsh`, битмапы мастера и блок `nsis:` в
+`electron-builder.yml`. Лаунчер теперь собирается как **payload**:
+
+```
+electron-builder --win --x64 --dir   →  release/win-unpacked/
+node scripts/make-payload.mjs        →  dist-payload/app.zip   (~200 МБ)
+```
+
+`app.zip` кладётся в `extraResources` второго, крошечного приложения:
+
+| Файл | Роль |
+|---|---|
+| `installer/main.ts` | frameless-окно 820×560 (`#06110c`), IPC, `--uninstall` / `--silent` / `--wait-pid` |
+| `installer/core.ts` | распаковка zip (yauzl), ярлыки через PowerShell, `reg.exe` в `HKCU`, удаление |
+| `installer/preload.ts` | только `contextBridge`: start/cancel/minimize/close, подписка на прогресс |
+| `installer/renderer/*` | React 18 + Tailwind + Framer Motion: приветствие, прогресс, готово, ошибка, режим удаления |
+| `electron.vite.installer.config.ts` | отдельная сборка; `yauzl` бандлится в `main.js` (внешний только `electron`) |
+| `electron-builder.installer.yml` | `target: portable`, `files: main.js, preload.js, renderer/**`, `extraResources: app.zip` |
+| `scripts/make-payload.mjs` | zip с deflate-потоком и data-дескрипторами: 200 МБ не проходят через RAM |
+
+Этапы и проценты (одна полоса, как в лаунчере): подготовка 0–6, распаковка
+6–82, ярлыки 82–92, реестр 92–98, готово 100. Строка этапов
+(«Подготовка · Распаковка · Ярлыки · Реестр») подсвечивается по текущей фазе.
+
+Что делает установка:
+
+* распаковка в `%LOCALAPPDATA%\VerdantLauncher` — без прав администратора;
+* ярлыки `Desktop\Verdant Launcher.lnk` и меню «Пуск» (PowerShell + `WScript.Shell`);
+* запись `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\VerdantLauncher`:
+  `DisplayName`, `DisplayVersion`, `Publisher`, `InstallLocation`, `DisplayIcon`,
+  `UninstallString` (`"…\Uninstall Verdant Launcher.exe" --uninstall`),
+  `QuietUninstallString` (`… --silent`), `NoModify`/`NoRepair`, `EstimatedSize` (КБ);
+* удаление — **тот же** exe с `--uninstall`: файлы, ярлыки и запись реестра,
+  а `%APPDATA%\Verdant` (сохранения, настройки, библиотеки) стирается только при
+  включённой галочке «Удалить сохранения и настройки».
+
+Обновление переписано под новый артефакт: `electron-updater` больше не
+вызывается (у portable-exe нет `latest.yml`). Лаунчер скачивает
+`Verdant-Launcher-<version>-Setup.exe` из релиза и запускает его с
+`--silent --wait-pid <pid>`; установщик ждёт завершения процесса (до 30 с) и
+только потом перезаписывает файлы.
+
+Пайплайн (`.github/workflows/release.yml`, `.github/workflows/ci.yml`):
+тесты → `typecheck` → `build:only` → `electron-builder --dir` → проверка
+содержимого `app.asar` (main/preload/renderer/`@xmcl`/`adm-zip`) → `make-payload`
+→ сборка UI установщика → `electron-builder -c electron-builder.installer.yml`
+→ проверка размера (`app.zip` ~200 МБ, setup ≥ 60 МБ) → артефакт
+`release-installer/*.exe`. NSIS в пайплайне нет ни на одном шаге.
+
+Скриншоты (headless Chromium, 820×560 @2x): `docs/screens/setup-welcome.png`,
+`setup-progress.png` (49 %, чип «Распаковка»), `setup-done.png`,
+`setup-uninstall.png` (режим удаления с галочкой).
+
+### 14.2. BMCLAPI: подмена до первого запроса
+
+В 1.1.2 зеркало включалось *после* двух сбоев — то есть пользователь сначала
+ждал таймаут официального хоста, а иногда получал 403 и «Сеть недоступна».
+В 1.2.0 порядок обращён:
+
+* `urlCandidates(url)` возвращает `[bmclapi…, official]` **всегда**, без
+  предварительных проб и без режима `unknown`; официальный URL остаётся
+  вторым кандидатом, поэтому падение зеркала деградирует, а не ломает;
+* `xmclDownloadOptions()` отдаёт `@xmcl` готовые `mavenHost` / `assetsHost` с
+  зеркалом первым (`/maven`, `/assets`) и переписанный `assetsIndexUrl`;
+  режим `official` (когда зеркало доказано мертво) меняет списки местами;
+* таймаут заголовков зависит от хоста: **4 с** для Mojang
+  (`OFFICIAL_CONNECT_TIMEOUT_MS`) и 8 с для зеркала; ответ, который не пришёл
+  за это время, отменяется и повторяется на зеркале — то есть переключение
+  укладывается в требуемые 3–5 с;
+* простой тела — 15 с (`res.setTimeout`), после него попытка прерывается и
+  повторяется; всего 4 попытки на файл;
+* `checkNetwork()` теперь выбирает зеркало, если оно ответило, даже когда
+  Mojang жив: одна предсказуемая скорость вместо лотереи 403.
+
+Докачка не изменилась по смыслу, но проверена в 1.2.0 на локальном сервере:
+`.part` + `Range: bytes=N-` + `206`, а `416` очищает `.part` и начинает файл
+заново. Кнопка «Продолжить установку» возвращает ровно на тот же файл/байт.
+
+### 14.3. Проверка
+
+| Проверка | Результат |
+|---|---|
+| `npm run typecheck` (node, test, web, installer) | чисто |
+| node: `vitest run --config vitest.config.ts` | **159 passed / 7 skipped** (15 файлов) |
+| UI: `vitest run --config vitest.ui.config.ts` | **28 passed** |
+| `electron-vite build` (лаунчер) | ✔ `out/main`, `out/preload`, `out/renderer` |
+| `electron-vite build -c electron.vite.installer.config.ts` | ✔ `installer/app/main.js` (58 КБ, yauzl внутри) + `renderer/` |
+| `tests/bootstrapper.test.ts` | 10 тестов: пути, реестр, экранирование апострофов в PowerShell, монотонность процентов, реальный zip-round-trip, install/uninstall с внедрёнными `fileOps` |
+| `tests/installer.test.ts` | 13 тестов: payload вместо NSIS, `extraResources`, имя артефакта, ключ реестра, LOCALAPPDATA, галочка данных, frameless-окно, `--wait-pid`, палитра без эмодзи, синхронизация версий |
+| `tests/download-engine.test.ts` | 18 тестов: зеркало первым без проб, пин на официальный хост при мёртвом зеркале, 4 с/8 с, монотонность, Range, редирект |
+| UI: тост без `{file}` | новый тест: сообщение без имени файла уходит в `errors.network_error.generic` |
+
+Windows-упаковка (portable exe, реестр, ярлыки) проверяется только в CI —
+в песочнице нет Windows-toolchain, а `bmclapi2.bangbang93.com` недоступен.

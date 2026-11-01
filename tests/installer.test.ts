@@ -1,116 +1,158 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 /**
- * Locks the NSIS wizard wiring. The `.nsh` itself is compiled by electron-builder
- * on Windows (see the `installer` CI job), these checks catch the cheap
- * mistakes: missing bitmaps, wrong sizes, a forgotten `nsis.include` or an
- * uninstaller that no longer removes user data.
+ * Locks the **custom bootstrapper** wiring (1.2.0).
+ *
+ * The NSIS wizard is gone: the launcher now ships as an unpacked payload inside
+ * a small Electron app that unpacks it, writes shortcuts and registers itself in
+ * «Установка и удаление программ». These checks catch the cheap mistakes that a
+ * Windows-only build would otherwise reveal ten minutes into CI:
+ *  · `electron-builder.installer.yml` losing `extraResources` (empty payload),
+ *  · the registry entry drifting away from the uninstaller path,
+ *  · the hash-checked shell of `installer/core.ts` forgetting the data-wipe flag,
+ *  · a frameless window turning into a white system dialog again.
  */
 
 const root = path.resolve(__dirname, '..');
-const installerDir = path.join(root, 'build', 'installer');
 
-function bmpSize(file: string): { width: number; height: number } {
-  const buffer = readFileSync(path.join(installerDir, file));
-  // "BM" + 24-bit uncompressed DIB: dimensions live in the BITMAPINFOHEADER
-  expect(buffer.subarray(0, 2).toString('ascii')).toBe('BM');
-  expect(buffer.readUInt32LE(14)).toBe(40); // header size
-  expect(buffer.readUInt16LE(28)).toBe(24); // bits per pixel
-  return { width: buffer.readInt32LE(18), height: buffer.readInt32LE(22) };
-}
+const read = (relative: string): string => readFileSync(path.join(root, relative), 'utf8');
 
-/** Minimal reader for the flat `nsis:` block of electron-builder.yml. */
-function readNsisBlock(): Record<string, string> {
-  // Windows runners check the repo out with CRLF, so split on both endings.
-  const lines = readFileSync(path.join(root, 'electron-builder.yml'), 'utf8').split(/\r?\n/);
-  const start = lines.findIndex((line) => /^nsis:\s*$/.test(line));
+/** Minimal reader for the flat `key: value` pairs of a top-level YAML block. */
+function yamlBlock(file: string, block: string): Record<string, string> {
+  const lines = read(file).split(/\r?\n/);
+  const start = lines.findIndex((line) => new RegExp(`^${block}:\\s*$`).test(line));
+  expect(start, `${block}: block must exist in ${file}`).toBeGreaterThanOrEqual(0);
   const values: Record<string, string> = {};
   for (const line of lines.slice(start + 1)) {
     if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
     if (!line.startsWith(' ')) break;
-    const match = line.match(/^ {2}([\w]+):\s*(.*)$/);
+    const match = line.match(/^ {2}([\w-]+):\s*(.+)$/);
     if (match) values[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
   }
   return values;
 }
 
-const config = { nsis: readNsisBlock() as Record<string, unknown> };
+const core = read('installer/core.ts');
+const main = read('installer/main.ts');
+const app = read('installer/renderer/App.tsx');
+const setupYml = read('electron-builder.installer.yml');
+const launcherYml = read('electron-builder.yml');
 
-const nshRaw = readFileSync(path.join(root, 'build', 'installer.nsh'));
-const nsh = readFileSync(path.join(root, 'build', 'installer.nsh'), 'utf8');
-
-describe('installer assets', () => {
-  it('ships MUI-sized sidebars and header', () => {
-    expect(bmpSize('installerSidebar.bmp')).toEqual({ width: 164, height: 314 });
-    expect(bmpSize('uninstallerSidebar.bmp')).toEqual({ width: 164, height: 314 });
-    expect(bmpSize('installerHeader.bmp')).toEqual({ width: 150, height: 57 });
-    expect(bmpSize('uninstallerHeader.bmp')).toEqual({ width: 150, height: 57 });
-    expect(bmpSize('logo.bmp')).toEqual({ width: 56, height: 56 });
+describe('bootstrapper package', () => {
+  it('ships the payload next to main.js instead of an NSIS script', () => {
+    expect(setupYml).toContain('dist-payload/app.zip');
+    expect(setupYml).toContain('to: app.zip');
+    expect(setupYml).not.toMatch(/^\s*nsis:/m);
+    expect(setupYml).toContain('target: portable');
+    expect(launcherYml).not.toMatch(/^\s*nsis:/m);
+    expect(existsSync(path.join(root, 'build', 'installer.nsh'))).toBe(false);
   });
 
-  it('references only bitmaps that exist', () => {
-    const fromNsh = [...nsh.matchAll(/\$\{BUILD_RESOURCES_DIR\}[/\\]installer[/\\]([\w.-]+\.bmp)/g)].map((m) => m[1]);
-    const fromYml = Object.values(config.nsis)
-      .filter((value): value is string => typeof value === 'string' && value.startsWith('build/installer/'))
-      .map((value) => path.basename(value));
+  it('bundles every file the bootstrapper needs at runtime', () => {
+    const files = yamlBlock('electron-builder.installer.yml', 'files') ?? {};
+    // the `files:` list is a YAML array, so assert on the raw text instead
+    expect(setupYml).toMatch(/- main\.js/);
+    expect(setupYml).toMatch(/- preload\.js/);
+    expect(setupYml).toMatch(/- renderer\/\*\*\/\*/);
+    expect(setupYml).toMatch(/- package\.json/);
+    expect(Object.keys(files)).toHaveLength(0);
+  });
 
-    expect(fromNsh.length).toBeGreaterThanOrEqual(2);
-    expect(fromYml.length).toBeGreaterThanOrEqual(3);
-    for (const file of new Set([...fromNsh, ...fromYml])) {
-      expect(existsSync(path.join(installerDir, file)), `${file} is referenced by the wizard`).toBe(true);
-    }
+  it('keeps the setup artifact name stable for the updater', () => {
+    expect(setupYml).toContain('artifactName: Verdant-Launcher-${version}-Setup.${ext}');
+    // the updater streams this exact name from the release page
+    expect(read('src/main/services/updater.ts')).toContain("'--silent'");
   });
 });
 
-describe('electron-builder wiring', () => {
-  it('uses the Verdant include and bitmaps', () => {
-    expect(config.nsis.include).toBe('build/installer.nsh');
-    expect(config.nsis.installerSidebar).toBe('build/installer/installerSidebar.bmp');
-    expect(config.nsis.uninstallerSidebar).toBe('build/installer/uninstallerSidebar.bmp');
-    expect(config.nsis.installerHeader).toBe('build/installer/installerHeader.bmp');
+describe('uninstall registration', () => {
+  it('points DisplayIcon and UninstallString at the installed copies', () => {
+    expect(core).toContain("export const APP_ID = 'VerdantLauncher'");
+    expect(core).toContain('HKCU');
+    expect(core).toContain('Microsoft');
+    expect(core).toContain('CurrentVersion');
+    expect(core).toContain('Uninstall');
+    expect(core).toContain('${APP_ID}');
+    expect(core).toContain('UninstallString');
+    expect(core).toContain('QuietUninstallString');
+    expect(core).toContain('--uninstall');
+    expect(core).toContain('--silent');
+    expect(core).toContain('EstimatedSize');
   });
 
-  it('keeps user data unless the uninstaller checkbox asks for it', () => {
-    expect(config.nsis.deleteAppDataOnUninstall).toBe('false');
-    expect(nsh).toContain('Удалить настройки и сохранения');
-    expect(nsh).toContain('RMDir /r "$APPDATA\\Verdant"');
-    expect(nsh).toContain('!macro customUnInstall');
-    expect(nsh).toContain('!macro customUnWelcomePage');
+  it('installs into LOCALAPPDATA without elevation', () => {
+    expect(core).toContain("'LOCALAPPDATA'");
+    expect(core).toContain("'VerdantLauncher'");
+    expect(core).not.toContain('ProgramFiles');
+    expect(core).toContain("'Desktop'");
+    expect(core).toContain("'Start Menu'");
   });
 
-  it('keeps the script UTF-8 with a BOM (Cyrillic copy)', () => {
-    // NSIS only decodes Cyrillic correctly when the script is a BOM-marked
-    // UTF-8 file; otherwise it falls back to the ANSI code page.
-    expect([...nshRaw.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
-    expect(nsh).toContain('Удаление Verdant Launcher');
+  it('wipes user data only when the checkbox asked for it', () => {
+    expect(core).toContain('removeData');
+    expect(app).toContain('Удалить сохранения и настройки');
+    // the launcher's own folder (%APPDATA%\\Verdant) survives a plain uninstall
+    expect(core).toMatch(/removeData[\s\S]{0,200}dataDir/);
+    // %APPDATA%\Verdant is resolved once and shared by install + uninstall
+    expect(core).toContain("process.env['APPDATA']");
+    expect(core).toContain("'Verdant'");
+  });
+});
+
+describe('frameless window', () => {
+  it('has no system chrome and keeps the preload sandboxed', () => {
+    expect(main).toContain('frame: false');
+    expect(main).toContain('contextIsolation: true');
+    expect(main).toContain('nodeIntegration: false');
+    expect(main).toContain("backgroundColor: '#06110c'");
   });
 
-  it('themes every MUI page', () => {
-    expect(nsh).toContain('!define MUI_BGCOLOR');
-    expect(nsh).toContain('!define MUI_TEXTCOLOR');
-    expect(nsh).toContain('!define MUI_INSTFILESPAGE_PROGRESSBAR colored');
-    expect(nsh).toContain('!define MUI_INSTFILESPAGE_COLORS');
+  it('waits for the running launcher before overwriting it', () => {
+    expect(main).toContain('--wait-pid');
+    expect(main).toContain('waitForExit');
+  });
+});
+
+describe('bootstrapper UI', () => {
+  it('uses the Verdant palette and no emoji', () => {
+    expect(app).toContain('emerald');
+    // every icon comes from lucide-react; a literal emoji would break the look
+    expect(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(app)).toBe(false);
+  });
+
+  it('shows the same install steps as the launcher progress card', () => {
+    expect(app).toContain('Подготовка');
+    expect(app).toContain('Распаковка');
+    expect(app).toContain('Ярлыки');
+    expect(app).toContain('Реестр');
   });
 });
 
 describe('version', () => {
   it('keeps APP_VERSION in sync with package.json', () => {
-    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string };
-    const constants = readFileSync(path.join(root, 'src', 'shared', 'constants.ts'), 'utf8');
+    const pkg = JSON.parse(read('package.json')) as { version: string };
+    const constants = read('src/shared/constants.ts');
     const declared = constants.match(/export const APP_VERSION = '([^']+)'/)?.[1];
     expect(declared).toBe(pkg.version);
+  });
+
+  it('keeps the bootstrapper manifest in sync too', () => {
+    const pkg = JSON.parse(read('package.json')) as { version: string };
+    const setup = JSON.parse(read('installer/app/package.json')) as { version: string; main: string };
+    expect(setup.version).toBe(pkg.version);
+    expect(setup.main).toBe('main.js');
   });
 
   it('does not hardcode the launcher version in the renderer', () => {
     // Minecraft/loader versions are literals everywhere (mock data), so only
     // the app version itself is checked here.
-    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string };
+    const pkg = JSON.parse(read('package.json')) as { version: string };
     const files = ['components/layout.tsx', 'lib/mock.ts', 'features/Settings.tsx'];
     for (const file of files) {
-      const source = readFileSync(path.join(root, 'src', 'renderer', 'src', file), 'utf8');
+      const source = read(path.join('src', 'renderer', 'src', file));
       expect(source, `${file} should import APP_VERSION`).toContain('APP_VERSION');
       expect(source.includes(`${pkg.version}'`), `${file} must not embed ${pkg.version}`).toBe(false);
       expect(source.includes(`v${pkg.version}`), `${file} must not embed v${pkg.version}`).toBe(false);

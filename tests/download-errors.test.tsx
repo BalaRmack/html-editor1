@@ -65,7 +65,7 @@ describe('download failures are surfaced, not swallowed', () => {
     expect(screen.getByRole('button', { name: /Повторить загрузку/ })).toBeTruthy()
   })
 
-  it('shows a red toast with the file name and a retry button when a download dies', async () => {
+  it('shows a red toast with the file name and a resume button when a download dies', async () => {
     const user = userEvent.setup()
     render(<App />)
     await waitFor(() => expect(playButton().disabled).toBe(false), { timeout: 8000 })
@@ -79,16 +79,33 @@ describe('download failures are surfaced, not swallowed', () => {
     // Shown both in the toast and in the play-screen error panel.
     expect(screen.getAllByText(/Не удалось скачать файл «client-1\.21\.4\.jar»/).length).toBeGreaterThan(0)
     const toast = screen.getByText('Загрузка не удалась').closest('div.pointer-events-auto') as HTMLElement
-    expect(within(toast).getByRole('button', { name: /Повторить/ })).toBeTruthy()
+    // 1.2.0: a network failure resumes instead of restarting from zero.
+    expect(within(toast).getByRole('button', { name: /Продолжить установку/ })).toBeTruthy()
 
     // The play button is now locked with the error label
     await waitFor(() => expect(playButton().disabled).toBe(true))
     expect(playButton().textContent).toContain('Ошибка загрузки')
 
-    // Retry from the toast recovers the instance
-    await user.click(within(toast).getByRole('button', { name: /Повторить/ }))
+    // Resume from the toast recovers the instance
+    await user.click(within(toast).getByRole('button', { name: /Продолжить установку/ }))
     await waitFor(() => expect(playButton().disabled).toBe(false), { timeout: 20000 })
     expect(playButton().textContent).toContain('ИГРАТЬ')
+  })
+
+  it('never renders a raw {file} placeholder when the failure has no file name', async () => {
+    render(<App />)
+    await waitFor(() => expect(playButton().disabled).toBe(false), { timeout: 8000 })
+
+    // A network error deep inside the pool has no file to blame (e.g. a DNS
+    // failure before the first request). Before 1.2.0 the toast literally said
+    // «Не удалось скачать файл «{file}»».
+    mockControl().failInstall('network_error', '')
+    await useAppStore.getState().installInstance('a1')
+
+    await waitFor(() => expect(screen.getAllByText('Загрузка не удалась').length).toBeGreaterThan(0), { timeout: 12000 })
+    expect(screen.queryByText(/\{file\}/)).toBeNull()
+    // …the copy falls back to the file-less wording instead
+    expect(screen.getAllByText(/Не удалось скачать файлы игры/).length).toBeGreaterThan(0)
   })
 
   it('stores the structured failure so the modal can show the same reason', async () => {
@@ -104,7 +121,9 @@ describe('download failures are surfaced, not swallowed', () => {
       expect(state.code).toBe('network_error')
       expect(state.file).toBe('assets-1.21.4.json')
     }
-    expect(useAppStore.getState().toasts.at(-1)?.action?.labelKey).toBe('common.retry')
+    // Since 1.2.0 a network failure offers «Продолжить установку», not a bare retry:
+    // the download resumes from the files already on disk.
+    expect(useAppStore.getState().toasts.at(-1)?.action?.labelKey).toBe('common.resume')
   })
 
   it('never enables «Играть» on a cancelled install', async () => {

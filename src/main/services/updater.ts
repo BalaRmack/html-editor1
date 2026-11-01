@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { autoUpdater } from 'electron-updater'
 import { APP_VERSION, GITHUB_OWNER, GITHUB_REPO } from '../../shared/constants'
@@ -53,8 +54,8 @@ export class UpdateService {
   private checking: Promise<UpdateState> | null = null
   private deferredTag: string | null = null
   private wiring: boolean = false
-  /** Where the dev-mode fallback keeps the downloaded installer. */
-  private devInstaller: string | null = null
+  /** The downloaded setup exe, kept until the user presses «Перезапустить». */
+  private installerPath: string | null = null
 
   init(): void {
     this.state.currentVersion = app.getVersion() || APP_VERSION
@@ -201,9 +202,12 @@ export class UpdateService {
   }
 
   /**
-   * Downloads the update. Packaged builds get `electron-updater`'s verified
-   * download; a dev build streams the installer from the release page instead so
-   * the progress bar (and the button) behave exactly the same.
+   * Downloads the update.
+   *
+   * Since 1.2.0 the release artifact is our own Electron bootstrapper, which has
+   * no `latest.yml` for `electron-updater` to verify. So every build — packaged
+   * or not — streams the setup exe from the release page and then runs it in
+   * `--silent` mode; the progress bar behaves exactly the same in both.
    */
   async download(): Promise<UpdateState> {
     if (!this.canAnnounce() || !this.state.release) return this.state
@@ -214,19 +218,6 @@ export class UpdateService {
       error: undefined
     })
 
-    if (app.isPackaged) {
-      try {
-        await autoUpdater.checkForUpdates()
-        await autoUpdater.downloadUpdate()
-      } catch (error) {
-        const message = (error as Error).message
-        logger.error(`Не удалось скачать обновление: ${message}`)
-        if (!this.devInstaller) this.patch({ phase: 'error', error: message })
-      }
-      return this.state
-    }
-
-    // ---- dev / portable fallback (real HTTP download, no installer swap) ----
     if (!release.assetUrl) {
       this.patch({ phase: 'error', error: 'В релизе нет .exe-файла установщика' })
       return this.state
@@ -246,7 +237,7 @@ export class UpdateService {
           progress: progressOf(received, total || release.sizeBytes, this.bytesPerSecond)
         })
       })
-      this.devInstaller = target
+      this.installerPath = target
       this.patch({ phase: 'ready', progress: this.state.progress ? { ...this.state.progress, percent: 100 } : null })
       logger.info(`Обновление скачано: ${target}`)
     } catch (error) {
@@ -261,17 +252,26 @@ export class UpdateService {
   private lastBytes = 0
   private bytesPerSecond = 0
 
-  /** Quits and installs. In a dev build it simply relaunches the app. */
+  /**
+   * Quits and runs the downloaded bootstrapper.
+   *
+   * `--wait-pid` makes the setup wait until this process is really gone, so it
+   * never tries to overwrite a locked `VerdantLauncher.exe`.
+   */
   install(): void {
     if (this.state.phase !== 'ready') return
     logger.info('Перезапуск для установки обновления')
-    try {
-      if (app.isPackaged) {
-        autoUpdater.quitAndInstall(false, true)
+    if (this.installerPath) {
+      try {
+        spawn(this.installerPath, ['--silent', '--wait-pid', String(process.pid)], {
+          detached: true,
+          stdio: 'ignore'
+        }).unref()
+        app.quit()
         return
+      } catch (error) {
+        logger.warn(`Не удалось запустить установщик: ${(error as Error).message}`)
       }
-    } catch (error) {
-      logger.warn(`quitAndInstall не удался: ${(error as Error).message}`)
     }
     app.relaunch()
     app.exit(0)

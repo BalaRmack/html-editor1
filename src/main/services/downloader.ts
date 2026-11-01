@@ -7,7 +7,20 @@ import { pipeline } from 'node:stream/promises'
 import { dirname } from 'node:path'
 import { createHash } from 'node:crypto'
 import { USER_AGENT } from '../../shared/constants'
-import { markNetworkFailure, markNetworkSuccess, urlCandidates, type ProbeResult } from './mirror'
+import { isMirrored, markNetworkFailure, markNetworkSuccess, urlCandidates, type ProbeResult } from './mirror'
+
+/** Headers/connection timeout for the mirror: healthy, generous. */
+export const CONNECT_TIMEOUT_MS = 8_000
+/**
+ * Headers/connection timeout for an *official* Mojang host. This is the 3–5 s
+ * budget the user asked for: a blocked `libraries.minecraft.net` gives up after
+ * 4 s and the same file is retried on BMCLAPI, still inside one attempt.
+ */
+export const OFFICIAL_CONNECT_TIMEOUT_MS = 4_000
+/** Body stall timeout: no bytes for 15 s ⇒ abort this attempt and retry. */
+export const DEFAULT_IDLE_TIMEOUT_MS = 15_000
+/** Attempts per file: the first try plus three retries. */
+export const DEFAULT_ATTEMPTS = 4
 
 /* -------------------------------------------------------------------------- */
 /*  Monotonic progress                                                        */
@@ -248,6 +261,15 @@ const agents = {
   })
 }
 
+/**
+ * Per-host connect budget: 4 s for Mojang, 8 s for the mirror. Every call site
+ * goes through this, so no official request can ever sit on a dead socket for
+ * longer than `OFFICIAL_CONNECT_TIMEOUT_MS`.
+ */
+export function connectTimeoutFor(url: string): number {
+  return isMirrored(url) ? CONNECT_TIMEOUT_MS : OFFICIAL_CONNECT_TIMEOUT_MS
+}
+
 export function destroyAgents(): void {
   agents.http.destroy()
   agents.https.destroy()
@@ -271,7 +293,8 @@ function requestOnce(
   url: string,
   init: RequestInit,
   agent: http.Agent | https.Agent,
-  headerTimeoutMs: number
+  headerTimeoutMs: number,
+  idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS
 ): Promise<Response> {
   return new Promise<Response>((resolve, reject) => {
     const target = new URL(url)
@@ -283,7 +306,16 @@ function requestOnce(
         agent,
         headers: init.headers as Record<string, string> | undefined
       },
-      (res) => resolve(toResponse(res, url))
+      (res) => {
+        // A socket that stops sending bytes is exactly the RU-blocked-host
+        // picture: headers arrive, the body trickles to a halt. Without this
+        // the promise never settles and the bar freezes at 40 MB.
+        res.setTimeout(idleTimeoutMs, () => {
+          res.destroy(new Error(`Таймаут ожидания данных ${idleTimeoutMs} мс: ${url}`))
+        })
+        res.once('error', reject)
+        resolve(toResponse(res, url))
+      }
     )
     request.setTimeout(headerTimeoutMs, () => {
       request.destroy(new Error(`Таймаут ${headerTimeoutMs} мс: ${url}`))
@@ -307,13 +339,18 @@ function requestOnce(
  * bytes themselves. This keeps 64 sockets warm and follows redirects (BMCLAPI
  * answers with 302 to its CDN).
  */
-export async function keepAliveFetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response> {
+export async function keepAliveFetch(
+  input: string | URL | Request,
+  init: RequestInit = {},
+  options: { idleTimeoutMs?: number; connectTimeoutMs?: number } = {}
+): Promise<Response> {
   let url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
   let method = init.method ?? 'GET'
   for (let hop = 0; hop < 5; hop++) {
     // The agent must match the protocol — an https agent on an http URL throws.
     const agent = url.startsWith('http:') ? agents.http : agents.https
-    const response = await requestOnce(url, { ...init, method }, agent, 15_000)
+    const headerTimeout = options.connectTimeoutMs ?? connectTimeoutFor(url)
+    const response = await requestOnce(url, { ...init, method }, agent, headerTimeout, options.idleTimeoutMs)
     if (!REDIRECTS.has(response.status)) return response
     const location = response.headers.get('location')
     if (!location) return response
@@ -331,14 +368,39 @@ export async function keepAliveFetch(input: string | URL | Request, init: Reques
  */
 export async function mirrorFetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response> {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-  const candidates = urlCandidates(url)
+  // 1.2.0: the mirror is the *primary* transport, not a retry path. Passing this
+  // to `@xmcl/installer` means every metadata/library/asset request already has
+  // BMCLAPI in front of it.
+  return fetchWithCandidates(url, init, true)
+}
+
+/**
+ * Goes through `urlCandidates(url)` in order and returns the first usable
+ * response. `preferMirror` puts BMCLAPI in front — used from the second attempt
+ * on, because a file that already failed once will keep failing on the same
+ * blocked host.
+ */
+export async function fetchWithCandidates(
+  url: string,
+  init: RequestInit,
+  preferMirror: boolean,
+  options: { idleTimeoutMs?: number } = {}
+): Promise<Response> {
+  const candidates = [...new Set(urlCandidates(url))]
+  // `urlCandidates` already puts BMCLAPI first; `preferMirror` only matters when
+  // the session is pinned to the official host.
+  const ordered = preferMirror ? [...candidates].sort((a, b) => Number(isMirrored(b)) - Number(isMirrored(a))) : candidates
   let lastError: Error | null = null
-  for (const candidate of candidates) {
+  for (const candidate of ordered) {
     try {
-      const response = await keepAliveFetch(candidate, {
-        ...init,
-        headers: { 'User-Agent': USER_AGENT, Accept: '*/*', ...(init.headers as Record<string, string> | undefined) }
-      })
+      const response = await keepAliveFetch(
+        candidate,
+        {
+          ...init,
+          headers: { 'User-Agent': USER_AGENT, Accept: '*/*', ...(init.headers as Record<string, string> | undefined) }
+        },
+        options
+      )
       if (response.status >= 500) throw new Error(`HTTP ${response.status}: ${candidate}`)
       markNetworkSuccess(candidate !== url)
       return response
@@ -387,6 +449,8 @@ export async function sha1File(path: string, signal?: AbortSignal): Promise<stri
 
 export interface DownloadSpec {
   url: string
+  /** Extra fallback URLs tried after `url` on every attempt. */
+  urls?: string[]
   destination: string
   sha1?: string
   size?: number
@@ -404,6 +468,8 @@ export interface DownloadOptions {
   onTotal?: (bytes: number) => void
   /** `true` when the file was already present and valid. */
   onSkip?: (spec: DownloadSpec) => void
+  /** Abort an attempt when the server stops sending bytes. */
+  idleTimeoutMs?: number
 }
 
 export class DownloadError extends Error {
@@ -435,7 +501,9 @@ export async function downloadFile(spec: DownloadSpec, options: DownloadOptions 
     return 'skipped'
   }
 
-  const retries = options.retries ?? 2
+  // Three retries on top of the first attempt. Every attempt keeps the bytes
+  // already on disk, so a file that dies at 60 % continues at 60 %.
+  const retries = options.retries ?? DEFAULT_ATTEMPTS - 1
   const part = `${destination}.part`
   await mkdir(dirname(destination), { recursive: true })
   let lastError: Error | null = null
@@ -449,7 +517,22 @@ export async function downloadFile(spec: DownloadSpec, options: DownloadOptions 
         ...options.headers
       }
       if (already > 0) headers.Range = `bytes=${already}-`
-      const response = await mirrorFetch(spec.url, { headers, signal: options.signal })
+      // From the second attempt on the mirror is tried first: the official host
+      // already proved it cannot deliver this file.
+      const candidates = spec.urls?.length ? spec.urls : [spec.url]
+      let response: Response | null = null
+      let candidateError: Error | null = null
+      for (const candidate of candidates) {
+        try {
+          response = await fetchWithCandidates(candidate, { headers, signal: options.signal }, attempt > 0, {
+            idleTimeoutMs: options.idleTimeoutMs
+          })
+          break
+        } catch (error) {
+          candidateError = error instanceof Error ? error : new Error(String(error))
+        }
+      }
+      if (!response) throw candidateError ?? new DownloadError('network_error', spec.name)
       if (!response.ok) {
         if (response.status === 416) await rm(part, { force: true })
         throw new DownloadError(`HTTP ${response.status}`, spec.name ?? destination)
@@ -486,10 +569,10 @@ export async function downloadFile(spec: DownloadSpec, options: DownloadOptions 
     : new DownloadError(lastError?.message ?? `Не удалось скачать ${spec.name ?? spec.url}`, spec.name ?? spec.url)
 }
 
-export interface BatchReport {
+export interface BatchReport<T extends DownloadSpec = DownloadSpec> {
   downloaded: number
   skipped: number
-  failed: Array<{ spec: DownloadSpec; error: Error }>
+  failed: Array<{ spec: T; error: Error }>
   bytes: number
 }
 
@@ -497,13 +580,13 @@ export interface BatchReport {
  * Downloads a batch with a bounded pool. A failed file is recorded and the rest
  * keep going — exactly what mod packs and asset sets need.
  */
-export async function downloadBatch(
-  specs: readonly DownloadSpec[],
+export async function downloadBatch<T extends DownloadSpec>(
+  specs: readonly T[],
   options: DownloadOptions & { concurrency?: number; onTotal?: (bytes: number) => void } = {}
-): Promise<BatchReport> {
+): Promise<BatchReport<T>> {
   const concurrency = Math.max(1, Math.min(32, options.concurrency ?? 16))
   const onBytes = options.onBytes
-  const report: BatchReport = { downloaded: 0, skipped: 0, failed: [], bytes: 0 }
+  const report: BatchReport<T> = { downloaded: 0, skipped: 0, failed: [], bytes: 0 }
   await settleAll(specs, concurrency, async (spec) => {
     try {
       const outcome = await downloadFile(spec, {

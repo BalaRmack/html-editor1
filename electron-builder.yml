@@ -19,9 +19,11 @@ npmRebuild: false
 compression: maximum
 removePackageScripts: true
 
+# The launcher itself is shipped as an unpacked folder (`--dir`) and packed into
+# `app.zip` for the Electron bootstrapper — no NSIS/Inno wizard anywhere.
 win:
   target:
-    - target: nsis
+    - target: dir
       arch:
         - x64
   icon: build/icon.ico
@@ -29,30 +31,6 @@ win:
   artifactName: Verdant-Launcher-${version}-Setup.${ext}
   legalTrademarks: Verdant Launcher
   requestedExecutionLevel: asInvoker
-
-nsis:
-  oneClick: false
-  perMachine: false
-  allowElevation: true
-  allowToChangeInstallationDirectory: true
-  createDesktopShortcut: always
-  createStartMenuShortcut: true
-  shortcutName: Verdant Launcher
-  uninstallDisplayName: Verdant Launcher
-  deleteAppDataOnUninstall: false
-  runAfterFinish: true
-  installerIcon: build/icon.ico
-  uninstallerIcon: build/icon.ico
-  license: build/license.txt
-  # Verdant wizard: dark pages, branded bitmaps, custom uninstaller page.
-  include: build/installer.nsh
-  installerSidebar: build/installer/installerSidebar.bmp
-  uninstallerSidebar: build/installer/uninstallerSidebar.bmp
-  installerHeader: build/installer/installerHeader.bmp
-  language: '1049'
-  installerLanguages:
-    - ru_RU
-    - en_US
 
 publish:
   provider: github

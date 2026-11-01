@@ -45,7 +45,7 @@ jobs:
         run: npm run build:only
 
   installer:
-    name: Windows installer (NSIS wizard)
+    name: Windows bootstrapper (Electron setup)
     runs-on: windows-latest
     needs: test
     steps:
@@ -62,34 +62,49 @@ jobs:
       - name: Build main + renderer
         run: npm run build:only
 
-      # Compiles build/installer.nsh for real: the wizard, its bitmaps and the
-      # uninstaller page are only exercised by makensis.
-      - name: Package NSIS installer
-        shell: bash
+      # The launcher ships as an unpacked folder (payload), never as an NSIS
+      # installer: the bootstrapper unpacks it into %LOCALAPPDATA%\VerdantLauncher.
+      - name: Build launcher payload
+        run: npx electron-builder --win --x64 --dir --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify payload asar
+        shell: pwsh
         run: |
-          set -o pipefail
-          if ! npx electron-builder --win nsis --x64 --publish never 2>&1 | tee nsis-build.log; then
-            N=0
-            grep -inE "warning|error in|invalid|aborting" nsis-build.log | sed 's/^[[:space:]]*//' | tail -n 12 | while IFS= read -r line; do
-              N=$((N + 1))
-              echo "::error title=W$N::$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-800)"
-            done
-            exit 1
-          fi
+          $list = (npx --yes @electron/asar list "release\win-unpacked\resources\app.asar") -join "`n"
+          foreach ($needle in @('out[\\/]main[\\/]index\.js', 'out[\\/]renderer[\\/]index\.html', 'node_modules[\\/]@xmcl[\\/]installer')) {
+            if ($list -notmatch $needle) { throw "Missing in asar: $needle" }
+          }
 
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nsis-build-log
-          path: nsis-build.log
-          if-no-files-found: ignore
+      - name: Pack payload into app.zip
+        run: node scripts/make-payload.mjs release/win-unpacked dist-payload/app.zip
 
-      - name: Upload installer
+      - name: Build bootstrapper UI
+        run: npx electron-vite build --config electron.vite.installer.config.ts
+
+      # This is the real proof that the custom bootstrapper compiles into one
+      # portable .exe with the payload inside — NSIS is not involved anywhere.
+      - name: Package bootstrapper
+        run: npx electron-builder --win --x64 --config electron-builder.installer.yml --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify bootstrapper
+        shell: pwsh
+        run: |
+          $payload = Get-Item "dist-payload\app.zip"
+          Write-Host ("payload: {0:N1} MB" -f ($payload.Length / 1MB))
+          $setup = Get-ChildItem "release-installer\*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "bootstrapper exe not found" }
+          Write-Host ("setup: {0} ({1:N1} MB)" -f $setup.Name, ($setup.Length / 1MB))
+          if ($setup.Length -lt 60MB) { throw "setup exe is suspiciously small" }
+
+      - name: Upload bootstrapper
         uses: actions/upload-artifact@v4
         with:
           name: verdant-launcher-setup
-          path: release/*.exe
+          path: release-installer/*.exe
           if-no-files-found: error
 
   network:

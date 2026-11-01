@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { formatEta, formatSpeed } from '../src/shared/format'
-import { Limiter, ProgressTracker, settleAll } from '../src/main/services/downloader'
+import {
+  CONNECT_TIMEOUT_MS,
+  connectTimeoutFor,
+  Limiter,
+  ProgressTracker,
+  settleAll
+} from '../src/main/services/downloader'
 import {
   getNetworkState,
   markNetworkFailure,
@@ -136,11 +142,30 @@ describe('BMCLAPI mirror', () => {
     )
   })
 
-  it('prefers the official host until the session flips to the mirror', () => {
+  it('substitutes BMCLAPI before the first request (1.2.0 forced mirror)', () => {
     resetNetworkState()
     const url = 'https://piston-data.mojang.com/v1/objects/abc/client.jar'
-    expect(urlCandidates(url)[0]).toBe(url)
+    // no probe, no failure, fresh session — the mirror is still first
+    expect(urlCandidates(url)[0]).toBe('https://bmclapi2.bangbang93.com/v1/objects/abc/client.jar')
+    // …and the official URL survives as the second candidate
+    expect(urlCandidates(url)[1]).toBe(url)
     expect(getNetworkState().mode).toBe('unknown')
+  })
+
+  it('pins back to the official host only when the mirror is the dead one', () => {
+    resetNetworkState()
+    const url = 'https://resources.download.minecraft.net/ab/abcdef'
+    markNetworkSuccess(false)
+    expect(getNetworkState().mode).toBe('official')
+    expect(urlCandidates(url)[0]).toBe(url)
+    expect(urlCandidates(url)[1]).toContain('bmclapi')
+    resetNetworkState()
+  })
+
+  it('gives an official host 4 s and the mirror 8 s to answer', () => {
+    expect(connectTimeoutFor('https://libraries.minecraft.net/x.jar')).toBe(4_000)
+    expect(connectTimeoutFor('https://bmclapi2.bangbang93.com/maven/x.jar')).toBe(8_000)
+    expect(CONNECT_TIMEOUT_MS).toBeGreaterThanOrEqual(3_000)
   })
 
   it('switches every later request to BMCLAPI after repeated failures', () => {
@@ -238,4 +263,46 @@ describe('resumable streaming downloads', () => {
       server.close()
     }
   })
+})
+
+describe('stalled sockets cannot freeze the installer', () => {
+  it('aborts a request that stops sending bytes and retries it', async () => {
+    const { downloadFile } = await import('../src/main/services/downloader')
+    const { mkdtemp, readFile, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { createServer } = await import('node:http')
+    let requests = 0
+    const server = createServer((req, res) => {
+      requests += 1
+      if (requests === 1) {
+        // First attempt: headers arrive, then the body stalls forever — exactly
+        // how a blocked Mojang CDN behaves.
+        res.writeHead(200, { 'content-length': '4096', 'content-type': 'application/octet-stream' })
+        res.write('x'.repeat(16))
+        return
+      }
+      res.writeHead(200, { 'content-length': '4096' })
+      res.end(Buffer.alloc(4096, 7))
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const dir = await mkdtemp(join(tmpdir(), 'verdant-stall-'))
+    const target = join(dir, 'client.jar')
+    const started = Date.now()
+    try {
+      const outcome = await downloadFile(
+        { url: `http://127.0.0.1:${port}/client.jar`, destination: target, name: 'client.jar' },
+        { idleTimeoutMs: 400, retries: 1 }
+      )
+      expect(outcome).toBe('downloaded')
+      expect(requests).toBeGreaterThanOrEqual(2)
+      expect(Date.now() - started).toBeLessThan(10_000)
+      expect((await readFile(target)).length).toBe(4096)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      server.close()
+    }
+  }, 20_000)
 })

@@ -119,7 +119,7 @@ describe('instance content manager', () => {
 
     await selectRow(user, 'Sodium')
     await user.click(within(dialog()).getAllByText('Обновить').at(-1) as HTMLElement)
-    await waitFor(() => expect(within(dialog()).getAllByText('1.2.0').length).toBeGreaterThan(0), { timeout: 8000 })
+    await waitFor(() => expect(within(dialog()).getAllByText('2.1.0').length).toBeGreaterThan(0), { timeout: 8000 })
     // the very same file no longer carries an update badge
     await waitFor(() => expect(within(dialog()).queryAllByText('Обновление').length).toBeLessThan(2), { timeout: 4000 })
   })
