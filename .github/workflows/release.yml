@@ -68,7 +68,8 @@ jobs:
             'out[\\/]renderer[\\/]index\.html',
             'node_modules[\\/]@xmcl[\\/]core',
             'node_modules[\\/]@xmcl[\\/]installer',
-            'node_modules[\\/]adm-zip'
+            'node_modules[\\/]adm-zip',
+            'build[\\/]icon\.png'
           )
           foreach ($needle in $needles) {
             if ($list -notmatch $needle) { throw "Missing in asar: $needle" }

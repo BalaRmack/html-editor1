@@ -1,6 +1,5 @@
 import { Menu, Tray, app, nativeImage } from 'electron'
-import { join } from 'node:path'
-import { createMainWindow, getMainWindow } from './window'
+import { createMainWindow, appIconPath, getMainWindow } from './window'
 
 let tray: Tray | null = null
 
@@ -14,7 +13,8 @@ export function showWindow(): void {
 
 export function ensureTray(): void {
   if (tray) return
-  const iconPath = join(__dirname, '../../build/icon.png')
+  const iconPath = appIconPath()
+  if (!iconPath) return
   const image = nativeImage.createFromPath(iconPath)
   if (image.isEmpty()) return
   try {

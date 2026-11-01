@@ -9,6 +9,8 @@ directories:
 files:
   - out/**/*
   - package.json
+  - build/icon.png
+  - build/icon-256.png
   - '!**/*.map'
   - '!**/*.ts'
 

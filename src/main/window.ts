@@ -1,5 +1,12 @@
 import { BrowserWindow, app, shell } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+
+/** Icon lives next to the built main process (asar: .../resources/app.asar/build). */
+export function appIconPath(): string | undefined {
+  const candidates = [join(__dirname, '../../build/icon.png'), join(__dirname, '../../../build/icon.png')]
+  return candidates.find((candidate) => existsSync(candidate))
+}
 
 let mainWindow: BrowserWindow | null = null
 
@@ -9,7 +16,7 @@ export function getMainWindow(): BrowserWindow | null {
 
 export function createMainWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin'
-  const iconPath = join(__dirname, '../../build/icon.png')
+  const iconPath = appIconPath()
 
   mainWindow = new BrowserWindow({
     width: 1360,
