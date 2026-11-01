@@ -69,8 +69,11 @@ jobs:
         run: |
           set -o pipefail
           if ! npx electron-builder --win nsis --x64 --publish never 2>&1 | tee nsis-build.log; then
-            MSG=$(tail -n 20 nsis-build.log | tr '\n' ' ' | sed 's/%/%25/g')
-            echo "::error title=NSIS build failed::$MSG"
+            N=0
+            tail -n 40 nsis-build.log | while IFS= read -r line; do
+              N=$((N + 1))
+              echo "::error title=nsis-$N::$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-900)"
+            done
             exit 1
           fi
 
