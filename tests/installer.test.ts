@@ -24,7 +24,8 @@ function bmpSize(file: string): { width: number; height: number } {
 
 /** Minimal reader for the flat `nsis:` block of electron-builder.yml. */
 function readNsisBlock(): Record<string, string> {
-  const lines = readFileSync(path.join(root, 'electron-builder.yml'), 'utf8').split('\n');
+  // Windows runners check the repo out with CRLF, so split on both endings.
+  const lines = readFileSync(path.join(root, 'electron-builder.yml'), 'utf8').split(/\r?\n/);
   const start = lines.findIndex((line) => /^nsis:\s*$/.test(line));
   const values: Record<string, string> = {};
   for (const line of lines.slice(start + 1)) {
