@@ -172,6 +172,11 @@ Electron-приложение (bootstrapper) с тёмным окном, кот�
 # PowerShell: скачать, сверить SHA-256 с checksums.txt релиза, запустить установщик
 irm https://github.com/BalaRmack/html-editor1/releases/latest/download/install.ps1 | iex
 
+# curl.exe (есть в Windows 10 1803+): тоже не ставит метку
+curl.exe -L -o "$env:TEMP\VerdantSetup.exe" `
+  https://github.com/BalaRmack/html-editor1/releases/download/v1.2.1/Verdant-Launcher-1.2.1-Setup.exe
+& "$env:TEMP\VerdantSetup.exe"
+
 # winget (манифест генерируется в релизном прогоне, публикация в winget-pkgs — PR)
 winget install BalaRmack.VerdantLauncher
 
