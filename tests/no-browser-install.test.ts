@@ -34,6 +34,20 @@ const installerMain = read('installer/main.ts');
 const ps1Raw = readFileSync(path.join(root, 'scripts', 'install.ps1'));
 const ps1 = ps1Raw.toString('utf8');
 
+describe('line endings are part of the build', () => {
+  it('keeps every JS/MJS script on LF so a shebang is never followed by CR', () => {
+    // On the Windows runner git checks out with autocrlf=true; a CRLF shebang
+    // makes esbuild leave a stray `\r`, and vitest dies while *importing* the
+    // suite ("SyntaxError: Invalid or unexpected token"). .gitattributes pins it.
+    const attrs = read('.gitattributes');
+    expect(attrs).toContain('* text=auto eol=lf');
+    expect(attrs).toContain('*.ps1 -text');
+    for (const file of ['scripts/sign-artifact.mjs', 'scripts/make-winget-manifest.mjs']) {
+      expect(readFileSync(path.join(root, file)).includes('\r\n'), `${file} must be LF`).toBe(false);
+    }
+  });
+});
+
 describe('install.ps1 — download without a browser', () => {
   it('is a PowerShell 5.1-compatible UTF-8 BOM script with CRLF endings', () => {
     // WinPS 5.1 decodes a BOM-less file as ANSI and mangles the Cyrillic output.

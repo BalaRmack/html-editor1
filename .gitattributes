@@ -1,0 +1,23 @@
+# Line endings are part of the build here, not a personal preference.
+#
+# Sources must be LF: Vite/esbuild strips a `#!` shebang up to the *newline only*,
+# so a CRLF shebang leaves a stray `\r` at the top of the file and vitest dies
+# with "SyntaxError: Invalid or unexpected token". That is exactly what happened
+# on the Windows runner, where git checks out with core.autocrlf=true.
+* text=auto eol=lf
+
+# PowerShell 5.1 wants CRLF (and install.ps1 carries a UTF-8 BOM), so these files
+# are stored byte-for-byte and never normalised.
+*.ps1 -text
+*.cmd -text
+*.bat -text
+
+# Binary assets: no conversion, no diff noise.
+*.png binary
+*.ico binary
+*.bmp binary
+*.ttf binary
+*.otf binary
+*.woff2 binary
+*.zip binary
+*.exe binary
