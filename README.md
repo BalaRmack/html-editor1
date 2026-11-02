@@ -163,6 +163,26 @@ Electron-приложение (bootstrapper) с тёмным окном, кот�
 в `%LOCALAPPDATA%\VerdantLauncher`, создаёт ярлыки на Рабочем столе и в меню
 «Пуск» и записывается в «Установка и удаление программ».
 
+### Подпись и SmartScreen
+
+Сборка по умолчанию **не подписана**, поэтому Windows показывает синее окно
+«Windows защитила ваш компьютер» на первую установку из браузера. Это лечится
+только сертификатом code signing; включается одним секретом репозитория:
+
+```text
+VERDANT_SIGN_CMD = signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 {file}
+```
+
+`scripts/sign-artifact.mjs` подставляет путь (`{file}`, в кавычках) и вызывает ваш
+CLI подписи — DigiCert KeyLocker, SSL.com eSigner, Azure Artifact Signing, `signtool`
+с токеном. Пайплайн подписывает payload **до** упаковки в zip и setup.exe — **после**
+сборки, затем проверяет `Get-AuthenticodeSignature` (должен быть `Valid` и таймстамп);
+при заданном секрете невалидная подпись валит релиз. Без секрета сборка остаётся
+зелёной и печатает предупреждение.
+
+Полный разбор: какие окна бывают, что не работает, сколько стоит сертификат и почему
+EV больше не даёт мгновенного обхода — `docs/SMARTSCREEN.md`.
+
 ### Установщик (bootstrapper на Electron)
 
 ```bash

@@ -77,6 +77,13 @@ jobs:
             if ($list -notmatch $needle) { throw "Missing in asar: $needle" }
           }
 
+      - name: Sign launcher payload
+        if: ${{ secrets.VERDANT_SIGN_CMD != '' }}
+        shell: bash
+        run: node scripts/sign-artifact.mjs "release/win-unpacked/VerdantLauncher.exe"
+        env:
+          VERDANT_SIGN_CMD: ${{ secrets.VERDANT_SIGN_CMD }}
+
       - name: Pack payload into app.zip
         run: node scripts/make-payload.mjs release/win-unpacked dist-payload/app.zip
 
@@ -99,6 +106,26 @@ jobs:
           if (-not $setup) { throw "bootstrapper exe not found" }
           Write-Host ("setup: {0} ({1:N1} MB)" -f $setup.Name, ($setup.Length / 1MB))
           if ($setup.Length -lt 60MB) { throw "setup exe is suspiciously small" }
+
+      - name: Sign bootstrapper
+        if: ${{ secrets.VERDANT_SIGN_CMD != '' }}
+        shell: bash
+        run: node scripts/sign-artifact.mjs release-installer/*.exe
+        env:
+          VERDANT_SIGN_CMD: ${{ secrets.VERDANT_SIGN_CMD }}
+
+      - name: Report signature status
+        shell: pwsh
+        env:
+          VERDANT_SIGN_CMD: ${{ secrets.VERDANT_SIGN_CMD }}
+        run: |
+          $expected = -not [string]::IsNullOrWhiteSpace($env:VERDANT_SIGN_CMD)
+          foreach ($file in @(Get-ChildItem "release-installer\*.exe")) {
+            $sig = Get-AuthenticodeSignature $file.FullName
+            Write-Host ("{0}: {1}" -f $file.Name, $sig.Status)
+            if ($expected -and $sig.Status -ne 'Valid') { throw "Подпись недействительна: $($file.Name) ($($sig.Status))" }
+          }
+          if (-not $expected) { Write-Host "::warning title=Сборка без подписи::VERDANT_SIGN_CMD не задан — см. docs/SMARTSCREEN.md" }
 
       - name: Upload bootstrapper
         uses: actions/upload-artifact@v4

@@ -94,6 +94,14 @@ jobs:
           $exe = Get-Item "release\win-unpacked\VerdantLauncher.exe"
           Write-Host ("payload exe: {0} ({1:N1} MB)" -f $exe.Name, ($exe.Length / 1MB))
 
+      # Authenticode BEFORE zipping: the signature lives inside the payload and
+      # survives the installer copying files to %LOCALAPPDATA%.
+      - name: Sign launcher payload
+        shell: bash
+        run: node scripts/sign-artifact.mjs "release/win-unpacked/VerdantLauncher.exe"
+        env:
+          VERDANT_SIGN_CMD: ${{ secrets.VERDANT_SIGN_CMD }}
+
       - name: Pack payload into app.zip
         run: node scripts/make-payload.mjs release/win-unpacked dist-payload/app.zip
 
@@ -104,6 +112,32 @@ jobs:
         run: npx electron-builder --win --x64 --config electron-builder.installer.yml --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign bootstrapper
+        shell: bash
+        run: node scripts/sign-artifact.mjs release-installer/*.exe
+        env:
+          VERDANT_SIGN_CMD: ${{ secrets.VERDANT_SIGN_CMD }}
+
+      # A release must never ship a half-signed installer: once the signing
+      # secret exists, an invalid or unstamped signature fails the job.
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        env:
+          VERDANT_SIGN_CMD: ${{ secrets.VERDANT_SIGN_CMD }}
+        run: |
+          $expected = -not [string]::IsNullOrWhiteSpace($env:VERDANT_SIGN_CMD)
+          $files = @("release\win-unpacked\VerdantLauncher.exe") + @(Get-ChildItem "release-installer\*.exe" | ForEach-Object { $_.FullName })
+          foreach ($file in $files) {
+            $sig = Get-AuthenticodeSignature $file
+            $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '—' }
+            Write-Host ("{0}: {1} | {2}" -f (Split-Path $file -Leaf), $sig.Status, $subject)
+            if ($expected -and $sig.Status -ne 'Valid') { throw "Подпись недействительна: $file ($($sig.Status))" }
+            if ($expected -and -not $sig.TimeStamperCertificate) { throw "Нет метки времени у $file — подпись умрёт вместе с сертификатом" }
+          }
+          if (-not $expected) {
+            Write-Host "::warning title=Сборка без подписи::Секрет VERDANT_SIGN_CMD не задан — SmartScreen покажет «Неизвестный издатель». Инструкция: docs/SMARTSCREEN.md"
+          }
 
       - name: Verify bootstrapper contents
         shell: pwsh
@@ -180,8 +214,28 @@ jobs:
                прав администратора не требуется.
             3. Нажмите «Установить», затем «Запустить лаунчер».
 
-            > SmartScreen может показать предупреждение, потому что файл не подписан
-            > сертификатом code signing. «Подробнее» → «Выполнить в любом случае».
+            ### SmartScreen: «Windows защитила ваш компьютер»
+
+            Файл скачан из интернета, поэтому Windows помечает его как «из интернета»
+            (Mark-of-the-Web) и до первой репутации показывает синее окно. Это не вирус
+            и не ошибка сборки — так Windows ведёт себя со **всеми** новыми программами,
+            включая подписанные, пока у них нет истории загрузок.
+
+            **Как установить:**
+
+            1. «Подробнее» → «Выполнить в любом случае» (кнопка появляется после клика).
+            2. Либо снимите метку заранее в PowerShell:
+               ```powershell
+               Unblock-File .\Verdant-Launcher-*-Setup.exe
+               ```
+               или: правый клик по файлу → «Свойства» → «Разблокировать» → «ОК».
+
+            **Обновления внутри лаунчера этого окна не показывают:** новая версия
+            скачивается самим лаунчером, без браузера, поэтому метки «из интернета» у
+            файла нет.
+
+            Подробный разбор вариантов (подпись сертификатом, репутация, что не работает)
+            — `docs/SMARTSCREEN.md` в репозитории.
 
             ### Что внутри
             - Electron 45 + React 18 + TypeScript + Vite + Tailwind CSS 4 + Zustand + Framer Motion
