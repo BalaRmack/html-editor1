@@ -3,7 +3,7 @@ import type { AppSettings, Language, LoaderType, MemorySettings } from './types'
 export const APP_NAME = 'Verdant Launcher'
 export const APP_SHORT_NAME = 'Verdant'
 export const APP_ID = 'app.verdant.launcher'
-export const APP_VERSION = '1.2.1'
+export const APP_VERSION = '1.2.2'
 
 export const GITHUB_OWNER = 'BalaRmack'
 export const GITHUB_REPO = 'html-editor1'

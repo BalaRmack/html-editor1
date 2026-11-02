@@ -402,6 +402,14 @@ export async function fetchWithCandidates(
         options
       )
       if (response.status >= 500) throw new Error(`HTTP ${response.status}: ${candidate}`)
+      // A mirror node (BMCLAPI redirects to university CDNs) can answer 403/404/429
+      // for a file the official host serves fine. Treat that as "this candidate
+      // failed" and move on, instead of returning the refusal as the result.
+      if (isMirrored(candidate) && (response.status === 403 || response.status === 404 || response.status === 429)) {
+        await response.body?.cancel().catch(() => undefined)
+        lastError = new Error(`HTTP ${response.status}: ${candidate}`)
+        continue
+      }
       markNetworkSuccess(candidate !== url)
       return response
     } catch (error) {

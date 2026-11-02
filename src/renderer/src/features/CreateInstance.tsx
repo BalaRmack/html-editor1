@@ -447,8 +447,12 @@ export function CreateInstanceModal(): JSX.Element | null {
   // install; the per-stage estimate below is only a fallback for older payloads.
   const estimated = Math.round(((rowIndex + stageFraction) / pipeline.length) * 100)
   const rawPercent = Math.min(99, typeof activeTask?.percent === 'number' ? Math.round(activeTask.percent) : estimated)
+  // The bar only moves forward *within one install*. Outside of the progress
+  // screen the value is reset, otherwise the 99% of the previous install would
+  // be shown from the very first second of the next one.
   const percentRef = useRef(0)
-  percentRef.current = Math.max(percentRef.current, rawPercent)
+  if (phase === 'progress') percentRef.current = Math.max(percentRef.current, rawPercent)
+  else percentRef.current = 0
   const percent = phase === 'progress' ? percentRef.current : null
 
   const runInstall = async (instance: Instance): Promise<void> => {

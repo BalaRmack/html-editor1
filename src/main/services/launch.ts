@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import {
@@ -78,6 +79,14 @@ export function buildJvmArgs(userArgs: string): string[] {
   return [...base, ...extra]
 }
 
+/** On Windows prefers `javaw.exe` (no console window) when it sits next to `java.exe`. */
+export function windowedJava(javaPath: string): string {
+  if (process.platform !== 'win32') return javaPath
+  if (!/[\\/]java\.exe$/i.test(javaPath)) return javaPath
+  const candidate = javaPath.replace(/java\.exe$/i, 'javaw.exe')
+  return existsSync(candidate) ? candidate : javaPath
+}
+
 export class LaunchService {
   private child: ChildProcess | null = null
   private watcher: MinecraftProcessWatcher | null = null
@@ -91,6 +100,7 @@ export class LaunchService {
   private stateListeners = new Set<StateListener>()
   private crashListeners = new Set<CrashListener>()
   private currentInstanceId: string | null = null
+  private starting = false
 
   state(): GameSnapshot {
     return { ...this.snapshot }
@@ -149,9 +159,20 @@ export class LaunchService {
   }
 
   async launch(context: LaunchContext): Promise<LaunchResult> {
-    if (this.child) {
+    // `child` is only set after spawn, so guard the whole preparation phase too
+    // (integrity check, repair, Java download) against a double click.
+    if (this.child || this.starting) {
       return { ok: false, error: 'game_running' }
     }
+    this.starting = true
+    try {
+      return await this.doLaunch(context)
+    } finally {
+      this.starting = false
+    }
+  }
+
+  private async doLaunch(context: LaunchContext): Promise<LaunchResult> {
     const { instance, profile, settings, sharedDir, instanceDir } = context
     this.currentInstanceId = instance.id
     this.setState({ state: 'checking', instanceId: instance.id, startedAt: null, exitCode: null, crashReportLocation: null })
@@ -214,7 +235,7 @@ export class LaunchService {
       const options: LaunchOption = {
         gamePath: context.instanceDir,
         resourcePath: sharedDir,
-        javaPath: java.path,
+        javaPath: windowedJava(java.path),
         version: resolved,
         gameProfile: { name: profile.name, id: profile.uuid },
         accessToken: offlineToken(profile.uuid),
@@ -231,7 +252,9 @@ export class LaunchService {
           LaunchPrecheck.checkNatives,
           LaunchPrecheck.linkAssets
         ],
-        extraExecOption: { windowsHide: true }
+        // No `windowsHide`: Windows would apply SW_HIDE to the game's first window
+        // and Minecraft would run invisible. `javaw.exe` has no console instead.
+        extraExecOption: {}
       }
 
       this.setState({ state: 'starting' })

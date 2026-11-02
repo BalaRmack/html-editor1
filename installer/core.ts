@@ -79,13 +79,53 @@ export async function extractPayload(
   destination: string,
   onProgress?: (progress: ExtractProgress) => void
 ): Promise<ExtractProgress> {
-  const progress: ExtractProgress = { files: 0, totalFiles: 0, bytes: 0, totalBytes: 0 }
-  const zip = await new Promise<yauzl.ZipFile>((resolve, reject) => {
-    yauzl.open(zipPath, { lazyEntries: true, autoClose: true }, (error, file) => {
-      if (error || !file) reject(error ?? new Error('Не удалось открыть архив'))
-      else resolve(file)
+  // Inside Electron any path ending in `.asar` is treated as an asar archive, so
+  // writing the payload's `resources/app.asar` fails ("Invalid package") or hangs.
+  // `noAsar` makes fs behave normally while we unpack; plain Node ignores it.
+  const proc = process as NodeJS.Process & { noAsar?: boolean }
+  const previous = proc.noAsar
+  proc.noAsar = true
+  try {
+    return await extractPayloadFiles(zipPath, destination, onProgress)
+  } finally {
+    proc.noAsar = previous ?? false
+  }
+}
+
+async function extractPayloadFiles(
+  zipPath: string,
+  destination: string,
+  onProgress?: (progress: ExtractProgress) => void
+): Promise<ExtractProgress> {
+  const open = (): Promise<yauzl.ZipFile> =>
+    new Promise((resolve, reject) => {
+      yauzl.open(zipPath, { lazyEntries: true, autoClose: true }, (error, file) => {
+        if (error || !file) reject(error ?? new Error('Не удалось открыть архив'))
+        else resolve(file)
+      })
     })
+
+  // Pass 1 reads only the central directory, so the totals are known up front.
+  // Counting them while extracting made the percentage jump backwards.
+  const totals = await new Promise<{ files: number; bytes: number }>((resolve, reject) => {
+    open().then((scan) => {
+      let files = 0
+      let bytes = 0
+      scan.on('error', reject)
+      scan.on('end', () => resolve({ files, bytes }))
+      scan.on('entry', (entry: yauzl.Entry) => {
+        const name = entry.fileName.replace(/\\/g, '/')
+        if (!/\/$/.test(name) && !name.split('/').includes('..') && !name.startsWith('/')) {
+          files += 1
+          bytes += entry.uncompressedSize
+        }
+        scan.readEntry()
+      })
+      scan.readEntry()
+    }, reject)
   })
+  const progress: ExtractProgress = { files: 0, totalFiles: totals.files, bytes: 0, totalBytes: totals.bytes }
+  const zip = await open()
 
   /**
    * One entry at a time, streamed through `pipeline`.
@@ -103,8 +143,6 @@ export async function extractPayload(
     // A zip can carry `../` — never write outside the install dir.
     if (name.split('/').includes('..') || name.startsWith('/')) return
 
-    progress.totalFiles += 1
-    progress.totalBytes += entry.uncompressedSize
     const target = join(destination, name)
     const stream = await new Promise<Readable>((resolve, reject) => {
       zip.openReadStream(entry, (error, readStream) => {
@@ -158,7 +196,10 @@ export function shortcutScript(shortcut: string, target: string, workDir: string
 
 export async function createShortcut(shortcut: string, target: string, workDir: string): Promise<void> {
   await mkdir(dirname(shortcut), { recursive: true })
-  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', shortcutScript(shortcut, target, workDir)])
+  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', shortcutScript(shortcut, target, workDir)], {
+    timeout: 20_000,
+    windowsHide: true
+  })
 }
 
 /* -------------------------------------------------------------------------- */
@@ -217,7 +258,10 @@ export function registryArgs(key: string, name: string, value: string | number):
 export async function writeUninstallRegistry(paths: InstallPaths, version: string, sizeKb?: number): Promise<void> {
   const values = uninstallRegistry(paths, version, sizeKb)
   for (const [name, value] of Object.entries(values)) {
-    await run('reg.exe', registryArgs(UNINSTALL_KEY, name, value as string | number))
+    await run('reg.exe', registryArgs(UNINSTALL_KEY, name, value as string | number), {
+      timeout: 15_000,
+      windowsHide: true
+    })
   }
 }
 
@@ -290,11 +334,15 @@ export async function installLauncher(options: InstallOptions): Promise<void> {
   await mkdir(installDir, { recursive: true })
 
   emit('extracting', 0, 'Распаковка файлов лаунчера')
+  // Chunk events arrive ~9000 times a second; sending each one over IPC floods
+  // the renderer and the window looks frozen. Forward at most one per 80 ms.
+  let lastEmit = 0
   const stats = await ops.extract(payloadZip, installDir, (progress) => {
+    const now = Date.now()
+    if (now - lastEmit < 80 && progress.bytes < progress.totalBytes) return
+    lastEmit = now
     const fraction = progress.totalBytes > 0 ? progress.bytes / progress.totalBytes : 0
-    const done = progress.totalBytes > 0 ? Math.min(progress.bytes, progress.totalBytes) : 0
     emit('extracting', fraction, `${progress.files} из ${progress.totalFiles} файлов`)
-    void done
   })
   if (options.signal?.aborted) throw new Error('Установка отменена')
 
