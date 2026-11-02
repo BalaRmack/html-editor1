@@ -172,6 +172,7 @@ jobs:
             release-installer/*.exe
             dist-winget/*.yaml
             dist-winget/checksums.txt
+            scripts/install.ps1
           if-no-files-found: error
           retention-days: 14
 
