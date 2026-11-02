@@ -133,12 +133,19 @@ jobs:
           node scripts/make-winget-manifest.mjs --version $version --from $setup.FullName --out dist-winget
           Get-Content "dist-winget\checksums.txt"
 
+      # `winget validate` is the authoritative schema check, but the runner's
+      # winget version drifts, so it warns instead of failing the build — the
+      # blocking check is the ajv/JSON-Schema test in `npm test`.
       - name: Validate winget manifest
         shell: pwsh
         continue-on-error: true
         run: |
-          winget validate --manifest dist-winget
-          if ($LASTEXITCODE -ne 0) { Write-Host "::warning title=winget validate::манифест не прошёл проверку схемы" }
+          $output = winget validate --manifest dist-winget 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) {
+            $reason = ($output -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 3) -join ' / '
+            Write-Host "::warning title=winget validate::$($reason -replace '%','%25')"
+          }
 
       # Parses install.ps1 with the real PowerShell parser: no execution, no
       # network, but a typo in the script users pipe into `iex` fails the build.

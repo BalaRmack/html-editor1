@@ -3,6 +3,8 @@ import path from 'node:path';
 
 // js-yaml v4 is ESM-first: the named `load` is the portable import
 import { load as parseYaml } from 'js-yaml';
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -93,20 +95,46 @@ describe('winget manifests', () => {
     ]);
   });
 
-  it('is valid YAML with the manifest types winget expects', () => {
+  it('validates against the official winget JSON schemas', () => {
+    // Vendored from microsoft/winget-cli (see scripts/winget-schemas/README.md).
+    // This is the same check `winget validate` runs on the Windows runner, only
+    // without a winget install — and it runs on every push, not just releases.
+    const ajv = addFormats(new Ajv({ allErrors: true, strict: false }));
+    const cases: Array<[string, string]> = [
+      ['VerdantLauncher.yaml', 'version'],
+      ['.installer.yaml', 'installer'],
+      ['.locale.en-US.yaml', 'defaultLocale'],
+      ['.locale.ru-RU.yaml', 'locale']
+    ];
+    for (const [suffix, schemaName] of cases) {
+      const file = byName(suffix)!;
+      const doc = parseYaml(file.content);
+      const schema = JSON.parse(
+        readFileSync(path.join(root, 'scripts', 'winget-schemas', `manifest.${schemaName}.1.6.0.json`), 'utf8')
+      ) as object;
+      const validate = ajv.compile(schema);
+      const ok = validate(doc);
+      expect(ok, `${file.name}: ${JSON.stringify(validate.errors)}`).toBe(true);
+    }
+  });
+
+  it('declares the manifest types winget requires', () => {
     const versionDoc = parseYaml(byName('VerdantLauncher.yaml')!.content) as Record<string, unknown>;
     const installerDoc = parseYaml(byName('.installer.yaml')!.content) as Record<string, unknown>;
+    const enDoc = parseYaml(byName('.locale.en-US.yaml')!.content) as Record<string, unknown>;
     const ruDoc = parseYaml(byName('.locale.ru-RU.yaml')!.content) as Record<string, unknown>;
     expect(versionDoc).toMatchObject({
       PackageIdentifier: 'BalaRmack.VerdantLauncher',
       PackageVersion: version,
-      DefaultLocale: 'ru-RU',
-      ManifestType: 'version'
+      DefaultLocale: 'en-US',
+      ManifestType: 'version',
+      // schema regex demands major.minor.patch — "1.6" is rejected
+      ManifestVersion: '1.6.0'
     });
-    // YAML reads an unquoted 1.6 as a float; winget accepts that, so compare loosely
-    expect(String(versionDoc.ManifestVersion)).toBe('1.6');
     expect(installerDoc.ManifestType).toBe('installer');
-    expect(ruDoc).toMatchObject({ ManifestType: 'defaultLocale', PackageLocale: 'ru-RU' });
+    // exactly one defaultLocale; the rest are plain locale manifests
+    expect(enDoc).toMatchObject({ ManifestType: 'defaultLocale', PackageLocale: 'en-US' });
+    expect(ruDoc).toMatchObject({ ManifestType: 'locale', PackageLocale: 'ru-RU' });
   });
 
   it('points at the exact release asset and pins its hash', () => {
