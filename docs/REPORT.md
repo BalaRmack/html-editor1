@@ -762,6 +762,20 @@ SmartScreen запускает такой файл только если у хе
 уезжают артефактом прогона; первая публикация в `microsoft/winget-pkgs` — PR
 владельца репозитория (нужен CLA), дальше `wingetcreate update`.
 
-Проверено: `typecheck` ×4, node **188 passed / 7 skipped**, UI **28 passed**, обе
+Проверено: `typecheck` ×4, node **189 passed / 7 skipped**, UI **28 passed**, обе
 сборки; CI run `41403027553` — 3/3 job, включая `winget validate --manifest` на
 Windows (единственные аннотации — deprecation Node 20 и ожидаемое «подписи нет»).
+
+Отдельная строка про грабли, на которых этот релиз и упал. Первый прогон
+(`41404774540`) умер за минуту на юнит-тестах Windows: `tests/signing.test.ts` и
+`tests/no-browser-install.test.ts` не загрузились с `SyntaxError: Invalid or
+unexpected token`. Причина — не код, а выкатка: на Windows-раннере
+`core.autocrlf=true`, поэтому `scripts/*.mjs` получал CRLF. esbuild срезает
+`#!`-строку ровно до `\n`, и в начале модуля оставался висячий `\r`. Воспроизведено
+локально переводом `sign-artifact.mjs` на CRLF; лечится `.gitattributes`
+(`* text=auto eol=lf`, `*.ps1 -text` — PowerShell 5.1 хочет CRLF и BOM), а тест в
+`no-browser-install.test.ts` теперь проверяет LF в скриптах, чтобы это не вернулось.
+После фикса (`0ac0402`) тег `v1.2.1` переехал на него; Release run `41406244052`
+— все шаги зелёные, опубликованы `Verdant-Launcher-1.2.1-Setup.exe`
+(273 116 458 B), `install.ps1` (6 136 B) и `checksums.txt` (99 B, sha256 экзешника
+`e02b5e5e…866ff5`).
