@@ -753,3 +753,15 @@ SmartScreen запускает такой файл только если у хе
 разбирает **все** файлы в каталоге, а рядом с YAML лежал `checksums.txt`
 («The manifest does not contain a valid root. File: checksums.txt»). Теперь
 манифесты пишутся в `dist-winget/manifests/`, а контрольная сумма — уровнем выше.
+
+### 15.6. Релиз 1.2.1
+
+Отдельная версия, чтобы «установка без окна» стала доступна сразу, а не со
+следующего релиза: `install.ps1` и `checksums.txt` теперь прикладываются к релизу,
+поэтому `releases/latest/download/install.ps1` — рабочий адрес. Манифесты winget
+уезжают артефактом прогона; первая публикация в `microsoft/winget-pkgs` — PR
+владельца репозитория (нужен CLA), дальше `wingetcreate update`.
+
+Проверено: `typecheck` ×4, node **188 passed / 7 skipped**, UI **28 passed**, обе
+сборки; CI run `41403027553` — 3/3 job, включая `winget validate --manifest` на
+Windows (единственные аннотации — deprecation Node 20 и ожидаемое «подписи нет»).
