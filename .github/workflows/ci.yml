@@ -140,7 +140,7 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: |
-          $output = winget validate --manifest dist-winget 2>&1 | Out-String
+          $output = winget validate --manifest dist-winget/manifests 2>&1 | Out-String
           Write-Host $output
           if ($LASTEXITCODE -ne 0) {
             $reason = ($output -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 3) -join ' / '

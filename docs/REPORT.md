@@ -746,5 +746,10 @@ SmartScreen запускает такой файл только если у хе
 * ровно один `defaultLocale` на пакет: `en-US`, `ru-RU` — обычный `locale`.
 
 Теперь `tests/no-browser-install.test.ts` валидирует все четыре файла против
-официальных JSON-схем (16 тестов), а шаг `winget validate` в CI печатает причину
+официальных JSON-схем (17 тестов), а шаг `winget validate` в CI печатает причину
 в аннотацию, чтобы следующая поломка не была загадкой.
+
+Вторая поломка нашлась той же аннотацией: `winget validate --manifest <dir>`
+разбирает **все** файлы в каталоге, а рядом с YAML лежал `checksums.txt`
+(«The manifest does not contain a valid root. File: checksums.txt»). Теперь
+манифесты пишутся в `dist-winget/manifests/`, а контрольная сумма — уровнем выше.

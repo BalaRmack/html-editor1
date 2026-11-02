@@ -193,10 +193,13 @@ if (invokedDirectly) {
     process.exit(2)
   }
 
-  await mkdir(out, { recursive: true })
+  // `winget validate --manifest <dir>` parses *every* file in the folder, so
+  // checksums.txt must not live next to the YAML.
+  const manifestDir = join(out, 'manifests')
+  await mkdir(manifestDir, { recursive: true })
   for (const file of buildManifests({ version, sha256, installerSize })) {
-    await writeFile(join(out, file.name), file.content, 'utf8')
-    console.log(`wrote ${join(out, file.name)}`)
+    await writeFile(join(manifestDir, file.name), file.content, 'utf8')
+    console.log(`wrote ${join(manifestDir, file.name)}`)
   }
   // sha256sum-compatible file, so the release can verify without winget
   await writeFile(join(out, 'checksums.txt'), `${sha256.toLowerCase()}  ${installerFileName(version)}\n`, 'ascii')

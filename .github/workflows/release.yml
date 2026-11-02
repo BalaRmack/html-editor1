@@ -170,7 +170,7 @@ jobs:
           name: verdant-launcher-windows
           path: |
             release-installer/*.exe
-            dist-winget/*.yaml
+            dist-winget/manifests/*.yaml
             dist-winget/checksums.txt
             scripts/install.ps1
           if-no-files-found: error

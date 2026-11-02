@@ -191,6 +191,15 @@ describe('winget manifests', () => {
     expect(digest).toMatch(/^[0-9A-F]{64}$/);
   });
 
+  it('keeps checksums.txt out of the manifest folder', () => {
+    // `winget validate --manifest <dir>` parses every file in the directory and
+    // failed the CI run with "The manifest does not contain a valid root.
+    // File: checksums.txt" — so the YAML files live in a subfolder.
+    expect(ci).toContain('winget validate --manifest dist-winget/manifests');
+    expect(release).toContain('dist-winget/manifests/*.yaml');
+    expect(release).toContain('dist-winget/checksums.txt');
+  });
+
   it('is generated in CI from the signed exe, so the hash is never stale', () => {
     const signIndex = release.indexOf('Sign bootstrapper');
     const manifestIndex = release.indexOf('Write checksums + winget manifest');
