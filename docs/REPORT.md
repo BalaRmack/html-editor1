@@ -693,3 +693,40 @@ SmartScreen запускает такой файл только если у хе
 Чего нельзя проверить в песочнице: саму подпись и поведение SmartScreen — для этого
 нужен сертификат и Windows. Пайплайн к этому готов: один секрет, дальше гейт сам
 не даст выпустить неподписанный или просроченный артефакт.
+
+### 15.4. «Чтобы вообще не вылезало»: каналы без Mark-of-the-Web
+
+Окно SmartScreen включает не отсутствие подписи, а метка «скачано из интернета».
+Браузер её ставит, `Invoke-WebRequest` и winget — нет. Отсюда два канала, где окна
+не бывает **вообще**, даже без сертификата:
+
+| Канал | Как | Почему без окна |
+|---|---|---|
+| PowerShell | `irm …/releases/latest/download/install.ps1 \| iex` | `Invoke-WebRequest` не пишет `Zone.Identifier` |
+| winget | `winget install BalaRmack.VerdantLauncher` | winget качает сам и ставит ZoneId=2 (trusted) |
+| апдейтер | «Обновить» в лаунчере | файл качает наш код |
+
+Добавлено:
+
+* `scripts/install.ps1` (BOM + CRLF для PowerShell 5.1): запрос релиза через API,
+  скачивание, `Unblock-File` если метка осталась с прошлой попытки, сверка SHA-256
+  с `checksums.txt`, только потом запуск. Параметры: `-VerifyOnly`, `-Version`,
+  `-InstallerArgs`, `-Keep`. Подключается к релизу как ассет `install.ps1`, поэтому
+  URL `releases/latest/download/install.ps1` стабилен;
+* `scripts/make-winget-manifest.mjs` — генерирует 4 манифеста (version, installer,
+  ru-RU, en-US) из подписанного exe: URL, SHA-256 (верхний регистр — так принято
+  в winget), `InstallerType: exe`, `Scope: user`, `InstallerSwitches.Silent:
+  --silent --no-launch`, `AppsAndFeaturesEntries` под нашу запись в `HKCU`;
+* `installer/main.ts` понимает `--no-launch`: апдейтер хочет вернуть лаунчер
+  пользователю, а пакетный менеджер — нет;
+* `checksums.txt` пишется после подписи (иначе хеш не совпал бы), прикладывается
+  к релизу; `winget`-манифесты — артефакт релизного прогона;
+* CI: `install.ps1` парсится настоящим парсером PowerShell
+  (`[Parser]::ParseFile`), манифест валидируется `winget validate` (не блокирует
+  сборку — версия winget на раннере меняется);
+* `tests/no-browser-install.test.ts` — 15 тестов: BOM/CRLF, «хеш проверяется до
+  запуска», наличие `Zone.Identifier`/`Unblock-File`, схема манифеста, `--no-launch`,
+  порядок шагов в релизе.
+
+Ограничение остаётся ровно одно: браузерная загрузка `.exe` — пока нет
+сертификата и репутации, окно будет (раздел 15.1–15.3).

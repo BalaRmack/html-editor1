@@ -139,6 +139,17 @@ jobs:
             Write-Host "::warning title=Сборка без подписи::Секрет VERDANT_SIGN_CMD не задан — SmartScreen покажет «Неизвестный издатель». Инструкция: docs/SMARTSCREEN.md"
           }
 
+      # Everything the "no browser" install paths need: checksums for
+      # install.ps1, and the winget manifests for `winget install`.
+      - name: Write checksums + winget manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          setup=$(ls release-installer/*.exe | head -n 1)
+          version=$(node -p "require('./package.json').version")
+          node scripts/make-winget-manifest.mjs --version "$version" --from "$setup" --out dist-winget
+          cat dist-winget/checksums.txt
+
       - name: Verify bootstrapper contents
         shell: pwsh
         run: |
@@ -159,6 +170,8 @@ jobs:
           name: verdant-launcher-windows
           path: |
             release-installer/*.exe
+            dist-winget/*.yaml
+            dist-winget/checksums.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -208,18 +221,32 @@ jobs:
 
             Полный список изменений: https://github.com/BalaRmack/html-editor1/compare/v1.1.1...${{ github.ref_name }}
 
-            ### Установка
+            ### Установка без окна SmartScreen (рекомендуется)
+
+            ```powershell
+            irm https://github.com/BalaRmack/html-editor1/releases/latest/download/install.ps1 | iex
+            ```
+
+            Скрипт скачивает установщик через PowerShell (браузера в цепочке нет, поэтому
+            нет и метки «скачано из интернета», которая и включает SmartScreen), сверяет
+            SHA-256 с `checksums.txt` этого же релиза и запускает тёмный установщик Verdant.
+            Ничего не ставится, пока хеш не совпал. Только проверить: `-VerifyOnly`.
+            Тихая установка: `-InstallerArgs '--silent','--no-launch'`.
+
+            ### Установка обычным способом
+
             1. Скачайте `Verdant-Launcher-*-Setup.exe` ниже.
             2. Запустите — откроется тёмный установщик Verdant. Никаких системных окон,
                прав администратора не требуется.
             3. Нажмите «Установить», затем «Запустить лаунчер».
 
-            ### SmartScreen: «Windows защитила ваш компьютер»
+            ### Если всё-таки скачали в браузере: «Windows защитила ваш компьютер»
 
             Файл скачан из интернета, поэтому Windows помечает его как «из интернета»
             (Mark-of-the-Web) и до первой репутации показывает синее окно. Это не вирус
             и не ошибка сборки — так Windows ведёт себя со **всеми** новыми программами,
-            включая подписанные, пока у них нет истории загрузок.
+            включая подписанные, пока у них нет истории загрузок. Установка способом
+            выше окна не показывает вообще.
 
             **Как установить:**
 
@@ -244,5 +271,7 @@ jobs:
             - Проверка целостности файлов и докачка битых
           files: |
             release-installer/*.exe
+            dist-winget/checksums.txt
+            scripts/install.ps1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

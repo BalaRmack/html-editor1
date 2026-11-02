@@ -24,6 +24,14 @@ import {
 const argv = process.argv.slice(1)
 const UNINSTALL_MODE = argv.includes('--uninstall')
 const SILENT = argv.includes('--silent')
+/**
+ * `--no-launch` — install and exit without starting the launcher.
+ *
+ * The updater wants the opposite (the user pressed «Обновить» and expects the app
+ * back), but package managers do not: winget and `install.ps1` install silently
+ * and must leave the final "start it yourself" decision to the user.
+ */
+const NO_LAUNCH = argv.includes('--no-launch')
 
 /** `--wait-pid 1234` — the launcher hands us its pid and says «wait for me». */
 function waitPid(): number {
@@ -232,7 +240,7 @@ async function silentRun(): Promise<void> {
   try {
     await waitForExit(waitPid())
     const result = await runInstall(
-      { installDir: defaultInstallDir(), desktopShortcut: true, startMenuShortcut: true, launch: true },
+      { installDir: defaultInstallDir(), desktopShortcut: true, startMenuShortcut: true, launch: !NO_LAUNCH },
       () => undefined
     )
     if (!result.ok) process.exitCode = 1

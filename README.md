@@ -163,6 +163,27 @@ Electron-приложение (bootstrapper) с тёмным окном, кот�
 в `%LOCALAPPDATA%\VerdantLauncher`, создаёт ярлыки на Рабочем столе и в меню
 «Пуск» и записывается в «Установка и удаление программ».
 
+### Установка без окна SmartScreen
+
+Окно SmartScreen включает не отсутствие подписи, а метка «файл скачан из интернета»
+(MotW), которую ставит браузер. Три канала её не ставят — и окна не показывают:
+
+```powershell
+# PowerShell: скачать, сверить SHA-256 с checksums.txt релиза, запустить установщик
+irm https://github.com/BalaRmack/html-editor1/releases/latest/download/install.ps1 | iex
+
+# winget (манифест генерируется в релизном прогоне, публикация в winget-pkgs — PR)
+winget install BalaRmack.VerdantLauncher
+
+# обновления внутри лаунчера — тоже без окна
+```
+
+`scripts/install.ps1` — не «магия в одну строку»: 130 строк, явная проверка
+`Get-FileHash` против `checksums.txt`, `Unblock-File` если метка всё же осталась,
+`-VerifyOnly` для «только скачать и проверить». Манифесты winget собирает
+`scripts/make-winget-manifest.mjs` из уже подписанного exe (URL + SHA-256),
+поэтому они не устаревают между релизами.
+
 ### Подпись и SmartScreen
 
 Сборка по умолчанию **не подписана**, поэтому Windows показывает синее окно

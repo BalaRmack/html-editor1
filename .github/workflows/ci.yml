@@ -125,6 +125,34 @@ jobs:
           }
           if (-not $expected) { Write-Host "::warning title=Сборка без подписи::VERDANT_SIGN_CMD не задан — см. docs/SMARTSCREEN.md" }
 
+      - name: Write checksums + winget manifest
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "release-installer\*.exe" | Select-Object -First 1
+          $version = node -p "require('./package.json').version"
+          node scripts/make-winget-manifest.mjs --version $version --from $setup.FullName --out dist-winget
+          Get-Content "dist-winget\checksums.txt"
+
+      - name: Validate winget manifest
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          winget validate --manifest dist-winget
+          if ($LASTEXITCODE -ne 0) { Write-Host "::warning title=winget validate::манифест не прошёл проверку схемы" }
+
+      # Parses install.ps1 with the real PowerShell parser: no execution, no
+      # network, but a typo in the script users pipe into `iex` fails the build.
+      - name: Validate install.ps1 syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "::error title=install.ps1::$($_.Message)" }
+            exit 1
+          }
+          Write-Host "install.ps1: синтаксис в порядке"
+
       - name: Upload bootstrapper
         uses: actions/upload-artifact@v4
         with:

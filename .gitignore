@@ -18,3 +18,4 @@ installer/app/renderer/
 dist-payload/
 release-installer/
 *.part
+dist-winget/
