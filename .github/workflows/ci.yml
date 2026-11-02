@@ -78,7 +78,6 @@ jobs:
           }
 
       - name: Sign launcher payload
-        if: ${{ secrets.VERDANT_SIGN_CMD != '' }}
         shell: bash
         run: node scripts/sign-artifact.mjs "release/win-unpacked/VerdantLauncher.exe"
         env:
@@ -108,7 +107,6 @@ jobs:
           if ($setup.Length -lt 60MB) { throw "setup exe is suspiciously small" }
 
       - name: Sign bootstrapper
-        if: ${{ secrets.VERDANT_SIGN_CMD != '' }}
         shell: bash
         run: node scripts/sign-artifact.mjs release-installer/*.exe
         env:

@@ -110,6 +110,14 @@ describe('pipeline order', () => {
     expect(release).not.toMatch(/CSC_LINK:\s*\$?\{?\{?\s*secrets/i);
   });
 
+  it('never puts secrets into a step-level if: (GitHub rejects the whole workflow)', () => {
+    // This shipped once: `if: ${{ secrets.X != '' }}` made the run fail in 0 s
+    // with "Unrecognized named-value: 'secrets'" before any step started.
+    for (const workflow of [release, ci]) {
+      expect(workflow).not.toMatch(/if:\s*\$\{\{\s*(secrets|env)\./);
+    }
+  });
+
   it('fails the release on an invalid or unstamped signature once a certificate exists', () => {
     expect(release).toContain("if ($expected -and $sig.Status -ne 'Valid') { throw");
     expect(release).toContain("if ($expected -and -not $sig.TimeStamperCertificate) { throw");
