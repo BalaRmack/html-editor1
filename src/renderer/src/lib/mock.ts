@@ -141,14 +141,14 @@ function emitUpdate(patch: Partial<UpdateState>): UpdateState {
 // Demo banner: always *one minor ahead* of the shipped build, never the shipped
 // version itself (tests/installer.test.ts forbids embedding the real version).
 const DEMO_RELEASE = {
-  version: '1.3.0',
-  tag: 'v1.3.0',
-  name: 'Verdant Launcher 1.3.0',
+  version: '1.4.0',
+  tag: 'v1.4.0',
+  name: 'Verdant Launcher 1.4.0',
   notes: 'Новый менеджер контента, автообновление и ускоренная проверка файлов.',
   publishedAt: now,
   htmlUrl: 'https://github.com/BalaRmack/html-editor1/releases',
-  assetName: 'Verdant-Launcher-1.3.0-Setup.exe',
-  assetUrl: 'https://example.invalid/Verdant-Launcher-1.3.0-Setup.exe',
+  assetName: 'Verdant-Launcher-1.4.0-Setup.exe',
+  assetUrl: 'https://example.invalid/Verdant-Launcher-1.4.0-Setup.exe',
   sizeBytes: 118_000_000
 }
 
@@ -160,7 +160,7 @@ const mockControl = {
     installedExtras.shader = DEMO_EXTRAS.shader.map((entry) => ({ ...entry }))
   },
   /** Shows the update banner as if GitHub had a newer release. */
-  offerUpdate(version = '1.3.0'): UpdateState {
+  offerUpdate(version = '1.4.0'): UpdateState {
     return emitUpdate({
       phase: 'available',
       release: { ...DEMO_RELEASE, version, tag: `v${version}` },
