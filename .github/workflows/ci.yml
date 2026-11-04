@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'arena/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Typecheck, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (main + preload + renderer)
+        run: npm run typecheck
+
+      - name: Unit tests (uuid, maven, jvm args, png, launch args)
+        run: npm run test
+
+      - name: Renderer smoke tests (jsdom + mock backend)
+        run: npm run test:ui
+
+      - name: Build
+        run: npm run build:only
+
+  installer:
+    name: Windows bootstrapper (Electron setup)
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build main + renderer
+        run: npm run build:only
+
+      # The launcher ships as an unpacked folder (payload), never as an NSIS
+      # installer: the bootstrapper unpacks it into %LOCALAPPDATA%\VerdantLauncher.
+      - name: Build launcher payload
+        run: npx electron-builder --win --x64 --dir --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify payload asar
+        shell: pwsh
+        run: |
+          $list = (npx --yes @electron/asar list "release\win-unpacked\resources\app.asar") -join "`n"
+          foreach ($needle in @('out[\\/]main[\\/]index\.js', 'out[\\/]renderer[\\/]index\.html', 'node_modules[\\/]@xmcl[\\/]installer')) {
+            if ($list -notmatch $needle) { throw "Missing in asar: $needle" }
+          }
+
+      - name: Pack payload into app.zip
+        run: node scripts/make-payload.mjs release/win-unpacked dist-payload/app.zip
+
+      - name: Build bootstrapper UI
+        run: npx electron-vite build --config electron.vite.installer.config.ts
+
+      # This is the real proof that the custom bootstrapper compiles into one
+      # portable .exe with the payload inside — NSIS is not involved anywhere.
+      - name: Package bootstrapper
+        run: npx electron-builder --win --x64 --config electron-builder.installer.yml --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify bootstrapper
+        shell: pwsh
+        run: |
+          $payload = Get-Item "dist-payload\app.zip"
+          Write-Host ("payload: {0:N1} MB" -f ($payload.Length / 1MB))
+          $setup = Get-ChildItem "release-installer\*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "bootstrapper exe not found" }
+          Write-Host ("setup: {0} ({1:N1} MB)" -f $setup.Name, ($setup.Length / 1MB))
+          if ($setup.Length -lt 60MB) { throw "setup exe is suspiciously small" }
+
+      - name: Upload bootstrapper
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdant-launcher-setup
+          path: release-installer/*.exe
+          if-no-files-found: error
+
+  network:
+    name: Live API integration (Mojang / Fabric / Modrinth)
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Live metadata + install smoke test
+        run: npx vitest run tests/network.test.ts
+        env:
+          VERDANT_NET_TESTS: '1'

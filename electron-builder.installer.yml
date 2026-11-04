@@ -1,0 +1,40 @@
+# Verdant Launcher — кастомный установщик на Electron.
+#
+# Это не NSIS-мастер: приложение-загрузчик (bootstrapper) с тёмным окном
+# React + Tailwind + Framer Motion и без системной рамки. Внутрь упакован
+# payload лаунчера (resources/app.zip) той же версии.
+appId: app.verdant.launcher.setup
+productName: Verdant Launcher Setup
+copyright: Copyright © 2026 BalaRmack
+
+directories:
+  app: installer/app
+  buildResources: build
+  output: release-installer
+
+files:
+  - main.js
+  - preload.js
+  - package.json
+  - renderer/**/*
+
+extraResources:
+  - from: dist-payload/app.zip
+    to: app.zip
+
+asar: true
+compression: maximum
+
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  icon: build/icon.ico
+  artifactName: Verdant-Launcher-${version}-Setup.${ext}
+  legalTrademarks: Verdant Launcher
+
+portable:
+  artifactName: Verdant-Launcher-${version}-Setup.${ext}
+  # No splash: the bootstrapper draws its own window immediately.
+  splashImage: null

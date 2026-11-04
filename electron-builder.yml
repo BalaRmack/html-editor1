@@ -1,0 +1,39 @@
+appId: app.verdant.launcher
+productName: Verdant Launcher
+copyright: Copyright © 2026 BalaRmack
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - out/**/*
+  - package.json
+  - build/icon.png
+  - build/icon-256.png
+  - '!**/*.map'
+  - '!**/*.ts'
+
+asar: true
+npmRebuild: false
+compression: maximum
+removePackageScripts: true
+
+# The launcher itself is shipped as an unpacked folder (`--dir`) and packed into
+# `app.zip` for the Electron bootstrapper — no NSIS/Inno wizard anywhere.
+win:
+  target:
+    - target: dir
+      arch:
+        - x64
+  icon: build/icon.ico
+  executableName: VerdantLauncher
+  artifactName: Verdant-Launcher-${version}-Setup.${ext}
+  legalTrademarks: Verdant Launcher
+  requestedExecutionLevel: asInvoker
+
+publish:
+  provider: github
+  owner: BalaRmack
+  repo: html-editor1
+  releaseType: release

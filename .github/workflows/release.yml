@@ -1,0 +1,194 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.0.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    name: Windows bootstrapper (Electron)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npx vitest run --config vitest.config.ts 2>&1 | tee unit-tests.log; then
+            N=0
+            grep -inE "FAIL|AssertionError|Error:|expected" unit-tests.log | sed 's/^[[:space:]]*//' | tail -n 12 | while IFS= read -r line; do
+              N=$((N + 1))
+              echo "::error title=T$N::$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-800)"
+            done
+            exit 1
+          fi
+
+      - name: Renderer smoke tests
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npx vitest run --config vitest.ui.config.ts 2>&1 | tee ui-tests.log; then
+            N=0
+            grep -inE "FAIL|AssertionError|Error:|expected" ui-tests.log | sed 's/^[[:space:]]*//' | tail -n 12 | while IFS= read -r line; do
+              N=$((N + 1))
+              echo "::error title=U$N::$(printf '%s' "$line" | sed 's/%/%25/g' | cut -c1-800)"
+            done
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build renderer + main + preload
+        run: npm run build:only
+
+      - name: Build launcher payload (unpacked app)
+        run: npx electron-builder --win --x64 --dir --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify packaged app (asar contents)
+        shell: pwsh
+        run: |
+          $list = (npx --yes @electron/asar list "release\win-unpacked\resources\app.asar") -join "`n"
+          $needles = @(
+            'out[\\/]main[\\/]index\.js',
+            'out[\\/]preload[\\/]index\.js',
+            'out[\\/]renderer[\\/]index\.html',
+            'node_modules[\\/]@xmcl[\\/]core',
+            'node_modules[\\/]@xmcl[\\/]installer',
+            'node_modules[\\/]adm-zip',
+            'build[\\/]icon\.png'
+          )
+          foreach ($needle in $needles) {
+            if ($list -notmatch $needle) { throw "Missing in asar: $needle" }
+            Write-Host "found $needle"
+          }
+          $exe = Get-Item "release\win-unpacked\VerdantLauncher.exe"
+          Write-Host ("payload exe: {0} ({1:N1} MB)" -f $exe.Name, ($exe.Length / 1MB))
+
+      - name: Pack payload into app.zip
+        run: node scripts/make-payload.mjs release/win-unpacked dist-payload/app.zip
+
+      - name: Build bootstrapper UI (Electron installer)
+        run: npx electron-vite build --config electron.vite.installer.config.ts
+
+      - name: Package bootstrapper (single .exe)
+        run: npx electron-builder --win --x64 --config electron-builder.installer.yml --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify bootstrapper contents
+        shell: pwsh
+        run: |
+          $zip = Get-Item "dist-payload\app.zip"
+          Write-Host ("payload: {0:N1} MB" -f ($zip.Length / 1MB))
+          $setup = Get-ChildItem "release-installer\*.exe" | Select-Object -First 1
+          if (-not $setup) { throw "bootstrapper exe not found" }
+          Write-Host ("setup: {0} ({1:N1} MB)" -f $setup.Name, ($setup.Length / 1MB))
+          if ($setup.Length -lt 60MB) { throw "setup exe is suspiciously small" }
+
+      - name: List artifacts
+        run: dir release-installer
+        shell: cmd
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdant-launcher-windows
+          path: |
+            release-installer/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: Verdant Launcher ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## Verdant Launcher ${{ github.ref_name }}
+
+            Премиальный лаунчер Minecraft: Vanilla / Fabric / Quilt / Forge / NeoForge,
+            offline-профиль, менеджер изолированных сборок, Modrinth в один клик, консоль с подсветкой.
+
+            ### Новое в 1.2.0
+
+            **Свой установщик вместо NSIS.** Теперь это отдельное Electron-приложение
+            (bootstrapper) с тёмным окном React + Tailwind + Framer Motion: без системной
+            рамки, с изумрудными акцентами Verdant, кастомными «Свернуть» / «Закрыть»,
+            полосой распаковки и этапами. Лаунчер ставится в `%LOCALAPPDATA%\VerdantLauncher`,
+            ярлыки создаются на Рабочем столе и в меню «Пуск», запись в
+            `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\VerdantLauncher`
+            показывает корректное имя, версию, иконку и размер. Удаление запускает **тот же**
+            установщик в режиме удаления — с галочкой «Удалить сохранения и настройки».
+
+            **Загрузки переписаны.** Библиотеки, нативы и ассеты качаются собственным
+            пулом: до 16 параллельных сокетов, keep-alive соединения, потоковая запись на
+            диск, докачка по `Range`. Общий размер файлов считается **до** старта, поэтому
+            прогресс не откатывается. У каждого запроса жёсткий таймаут простоя 15 с и три
+            повторные попытки, а при сбое официального хоста URL мгновенно подменяется на
+            зеркало **BMCLAPI** (`bmclapi2.bangbang93.com`): version json, client jar,
+            библиотеки, ассеты, maven Fabric/Forge/NeoForge/Quilt.
+
+            **«Ожидание сети» вместо «Отменено».** Сетевой обрыв больше не выглядит
+            отменой: карточка показывает причину и кнопку «Продолжить установку», которая
+            не начинает качать всё заново, а продолжает с уже скачанных файлов.
+
+            **Моды:** пул загрузок по 8–12 одновременно, ошибка одного мода не ломает
+            установку — она собирается в отчёт.
+
+            Прочее из 1.1.1 остаётся: обратная связь из лаунчера, splash и инкрементальная
+            проверка файлов, проверка ника, ключ CurseForge в настройках.
+
+            Полный список изменений: https://github.com/BalaRmack/html-editor1/compare/v1.1.1...${{ github.ref_name }}
+
+            ### Установка
+            1. Скачайте `Verdant-Launcher-*-Setup.exe` ниже.
+            2. Запустите — откроется тёмный установщик Verdant. Никаких системных окон,
+               прав администратора не требуется.
+            3. Нажмите «Установить», затем «Запустить лаунчер».
+
+            > SmartScreen может показать предупреждение, потому что файл не подписан
+            > сертификатом code signing. «Подробнее» → «Выполнить в любом случае».
+
+            ### Что внутри
+            - Electron 45 + React 18 + TypeScript + Vite + Tailwind CSS 4 + Zustand + Framer Motion
+            - Ядро запуска: `@xmcl/core` + `@xmcl/installer` (корректные нативы, classpath, Forge post-processors)
+            - Автоскачивание Java (Mojang JRE), поиск JDK в реестре Windows
+            - Проверка целостности файлов и докачка битых
+          files: |
+            release-installer/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,76 @@
+@import 'tailwindcss';
+
+@source './**/*.{ts,tsx}';
+
+@theme {
+  --color-ink-950: #06100b;
+  --color-ink-900: #08140f;
+  --color-ink-850: #0b1a13;
+  --color-ink-800: #10231a;
+  --color-ink-700: #163022;
+  --color-ink-600: #1e3d2c;
+
+  --color-emerald-glow: #2fe28c;
+  --color-emerald: #10b981;
+  --color-emerald-soft: #34d399;
+  --color-emerald-deep: #047857;
+
+  --color-text: #e9efec;
+  --color-muted: #96a29e;
+  --color-faint: #667370;
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-ink-950);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-feature-settings: 'ss01' on, 'cv11' on;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  input {
+    user-select: text;
+  }
+
+  ::selection {
+    background: rgba(47, 226, 140, 0.28);
+  }
+}
+
+/* The whole window is a drag handle except the controls. */
+.titlebar {
+  -webkit-app-region: drag;
+}
+
+.titlebar button,
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.grid-glow {
+  background-image:
+    radial-gradient(120% 90% at 12% 0%, rgba(47, 226, 140, 0.16), transparent 58%),
+    radial-gradient(90% 70% at 100% 100%, rgba(16, 185, 129, 0.12), transparent 60%),
+    linear-gradient(to bottom, #08140f, #06100b);
+}
+
+.grid-lines {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(70% 70% at 50% 0%, black, transparent 85%);
+}

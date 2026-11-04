@@ -1,0 +1,144 @@
+/**
+ * Error plumbing for installs.
+ *
+ * The launcher talks to a lot of flaky remote services (Mojang, Fabric, Forge,
+ * Maven mirrors, Modrinth), so every failure that reaches the UI has to answer
+ * three questions: *what* broke (`code`), *which file* was in flight (`file`)
+ * and *whether retrying makes sense* (`retryable`).
+ */
+
+export type ErrorCode =
+  | 'network_error'
+  | 'integrity_failed'
+  | 'not_installed'
+  | 'manifest_error'
+  | 'loader_error'
+  | 'java_required'
+  | 'java_not_found'
+  | 'version_not_found'
+  | 'cancelled'
+  | 'disk_error'
+  | 'install_failed'
+  | 'json_corrupt'
+
+export interface FailureShape {
+  code: string
+  message: string
+  file?: string
+  stage?: string
+  retryable: boolean
+}
+
+export class AppError extends Error {
+  readonly code: string
+  readonly file?: string
+  readonly stage?: string
+  readonly retryable: boolean
+
+  constructor(failure: FailureShape) {
+    super(failure.message)
+    this.name = 'AppError'
+    this.code = failure.code
+    this.file = failure.file
+    this.stage = failure.stage
+    this.retryable = failure.retryable
+  }
+}
+
+export function toFailure(error: unknown, stage?: string): FailureShape {
+  if (error instanceof AppError) {
+    return {
+      code: error.code,
+      message: error.message,
+      file: error.file,
+      stage: error.stage ?? stage,
+      retryable: error.retryable
+    }
+  }
+
+  const err = error as (Error & { code?: string; url?: string; file?: string; errors?: unknown[] }) | undefined
+  // AggregateError / bare rejections surface with an empty message — dig one
+  // level deeper so the user never sees «Установка не удалась: » with nothing.
+  const nested = Array.isArray(err?.errors) ? err?.errors.find((item) => (item as Error)?.message) : undefined
+  const raw = err?.message ? String(err.message) : nested ? String((nested as Error).message) : String(error ?? '')
+  const message = raw.trim()
+  const code = err?.code
+
+  // Cancellation is a user action, never an error the user should retry.
+  if (code === 'cancelled' || /отменена|cancel+ed/i.test(message)) {
+    return { code: 'cancelled', message: 'Установка отменена', stage, retryable: false }
+  }
+
+  // Known, already-classified failures coming from the services.
+  if (code && ['java_required', 'java_not_found', 'version_not_found', 'manifest_error'].includes(code)) {
+    return { code, message, stage, retryable: code !== 'java_required' }
+  }
+  if (/enospc/i.test(message) || /no space left/i.test(message)) {
+    return { code: 'disk_error', message, stage, retryable: false }
+  }
+
+  const networkLike =
+    /ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|ESOCKETTIMEDOUT|UND_ERR|headers timeout|body timeout|connect timeout|socket hang up|getaddrinfo|premature close|aborted|aggregateerror|other side closed|network|fetch failed|fail to (download|fetch)|failed to (download|fetch)|status code 5\d\d|status code 429/i.test(
+      message
+    )
+
+  const url = err?.url ?? extractUrl(message)
+  // A downloader error knows the exact file even when the message carries no URL
+  // — that is what fills `{file}` in the toast instead of leaving the template.
+  const file = err?.file ?? (url ? fileNameFromUrl(url) : extractQuotedFile(message))
+  if (networkLike) {
+    return {
+      code: 'network_error',
+      message: file ? `Не удалось скачать файл ${file}` : 'Сеть недоступна или сервер не отвечает',
+      file,
+      stage,
+      retryable: true
+    }
+  }
+
+  // Unknown failure: keep a readable sentence, but never an empty string.
+  const friendly = message && !/^(aggregate)?error$/i.test(message) ? message : 'Не удалось завершить установку'
+  return {
+    code: 'install_failed',
+    message: /timeout|timed out/i.test(message) ? `Сервер не ответил вовремя${file ? ` (${file})` : ''}` : friendly,
+    file,
+    stage,
+    retryable: true
+  }
+}
+
+const URL_RE = /https?:\/\/[^\s"'<>)\]]+/i
+
+export function extractUrl(text: string): string | undefined {
+  const match = text.match(URL_RE)
+  // Log lines often glue punctuation to the URL: `...client.jar: ECONNRESET`.
+  return match ? match[0].replace(/[.,;:!?]+$/, '') : undefined
+}
+
+/** Pulls a file name out of `... (C:\...\assets\indexes\34.json)`-style text. */
+export function extractQuotedFile(text: string): string | undefined {
+  const match = text.match(/([\w.-]+\.[a-zA-Z0-9]{2,5})(?=[)\s'"]|$)/)
+  return match ? match[1] : undefined
+}
+
+/** `https://x/y/z/client.jar?q=1` → `client.jar`. */
+export function fileNameFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    const base = parsed.pathname.split('/').filter(Boolean).pop()
+    return base ? decodeURIComponent(base.replace(/[.,;:!?]+$/, '')) : parsed.hostname
+  } catch {
+    const base = url.split('?')[0].split('/').filter(Boolean).pop()
+    return base ?? url
+  }
+}
+
+/** Wraps a stage so any throw is annotated with the stage that failed. */
+export async function withStage<T>(stage: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run()
+  } catch (error) {
+    const failure = toFailure(error, stage)
+    throw new AppError(failure)
+  }
+}
